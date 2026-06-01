@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jmhobbs/odol/internal/detector"
 	"github.com/jmhobbs/odol/internal/mlod"
@@ -12,6 +13,25 @@ import (
 	"github.com/jmhobbs/odol/internal/modelcfg"
 	"github.com/jmhobbs/odol/internal/odol"
 )
+
+// set by goreleaser
+var (
+	version string
+	commit  string
+	date    string
+)
+
+func init() {
+	if version == "" {
+		version = "0.0.0-dev"
+	}
+	if commit == "" {
+		commit = "HEAD"
+	}
+	if date == "" {
+		date = time.Now().Format(time.RFC3339)
+	}
+}
 
 type partialParseError struct {
 	LODIndex    int
@@ -31,6 +51,7 @@ func (e partialParseError) Error() string {
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s <input.p3d>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "version: %s (commit %s, built at %s)\n", version, commit, date)
 		os.Exit(2)
 	}
 
