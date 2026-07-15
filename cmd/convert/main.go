@@ -1,37 +1,19 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/jmhobbs/odol/internal/detector"
+	"github.com/jmhobbs/odol/internal/fbxexport"
 	"github.com/jmhobbs/odol/internal/mlod"
 	"github.com/jmhobbs/odol/internal/model"
 	"github.com/jmhobbs/odol/internal/modelcfg"
 	"github.com/jmhobbs/odol/internal/odol"
 )
-
-// set by goreleaser
-var (
-	version string
-	commit  string
-	date    string
-)
-
-func init() {
-	if version == "" {
-		version = "0.0.0-dev"
-	}
-	if commit == "" {
-		commit = "HEAD"
-	}
-	if date == "" {
-		date = time.Now().Format(time.RFC3339)
-	}
-}
 
 type partialParseError struct {
 	LODIndex    int
@@ -49,21 +31,48 @@ func (e partialParseError) Error() string {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s <input.p3d>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "version: %s (commit %s, built at %s)\n", version, commit, date)
+	fbx := flag.Bool("fbx", false, "export FBX instead of MLOD")
+	fbxASCII := flag.Bool("fbx-ascii", false, "export ASCII FBX instead of binary (implies --fbx)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: %s [--fbx] [--fbx-ascii] <input.p3d>\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) != 1 {
+		flag.Usage()
 		os.Exit(2)
 	}
 
-	if err := run(os.Args[1], os.Stderr); err != nil {
+	useFBX, useASCII := resolveFBXMode(*fbx, *fbxASCII)
+
+	var err error
+	if useFBX {
+		err = runFBX(args[0], useASCII, os.Stderr)
+	} else {
+		err = run(args[0], os.Stderr)
+	}
+
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
+// resolveFBXMode applies the "--fbx-ascii implies --fbx" rule.
+func resolveFBXMode(fbx, fbxASCII bool) (useFBX, useASCII bool) {
+	return fbx || fbxASCII, fbxASCII
+}
+
 func run(inputPath string, logOutput io.Writer) error {
 	outputP3DPath, outputConfigPath := outputPaths(inputPath)
 	return runWithOutputsLogged(inputPath, outputP3DPath, outputConfigPath, logOutput)
+}
+
+func runFBX(inputPath string, ascii bool, logOutput io.Writer) error {
+	outputFBXPath := fbxOutputPath(inputPath)
+	return runFBXWithOutputLogged(inputPath, outputFBXPath, ascii, logOutput)
 }
 
 func outputPaths(inputPath string) (string, string) {
@@ -75,6 +84,16 @@ func outputPaths(inputPath string) (string, string) {
 	}
 
 	return filepath.Join(dir, base+"_mlod.p3d"), filepath.Join(dir, base+".model.cfg")
+}
+
+func fbxOutputPath(inputPath string) string {
+	dir := filepath.Dir(inputPath)
+	ext := filepath.Ext(inputPath)
+	base := filepath.Base(inputPath)
+	if ext != "" {
+		base = base[:len(base)-len(ext)]
+	}
+	return filepath.Join(dir, base+".fbx")
 }
 
 func runWithOutputsLogged(inputPath, outputP3DPath, outputConfigPath string, logOutput io.Writer) error {
@@ -114,6 +133,56 @@ func runWithOutputsLogged(inputPath, outputP3DPath, outputConfigPath string, log
 	}
 	if err := os.WriteFile(outputConfigPath, []byte(renderedConfig), 0o644); err != nil {
 		return err
+	}
+
+	logger.logf("conversion complete")
+	return nil
+}
+
+func runFBXWithOutputLogged(inputPath, outputFBXPath string, ascii bool, logOutput io.Writer) error {
+	logger := stepLogger{w: logOutput}
+	logger.logf("  input P3D: %s", inputPath)
+	logger.logf(" output FBX: %s", outputFBXPath)
+
+	format, err := detector.DetectFile(inputPath)
+	if err != nil {
+		return err
+	}
+	logger.logf("detected input format: %s", format.String())
+
+	var parsed *model.Model
+	switch format.Family {
+	case detector.P3DFamilyODOL:
+		logger.logf("converting %s to FBX", format.String())
+		logger.logf("parsing ODOL data")
+		parsed, err = odol.ParseFileStrict(inputPath)
+		if err != nil {
+			return err
+		}
+		logger.logf("validating full decode")
+		if err = ensureFullyDecoded(parsed); err != nil {
+			return err
+		}
+	case detector.P3DFamilyMLOD:
+		logger.logf("converting MLOD/P3DM to FBX")
+		logger.logf("parsing MLOD data")
+		parsed, err = mlod.ParseFile(inputPath)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported input format for FBX export: %s", format.String())
+	}
+
+	logger.logf("writing FBX")
+	if ascii {
+		if err := fbxexport.WriteASCIIFile(outputFBXPath, parsed); err != nil {
+			return err
+		}
+	} else {
+		if err := fbxexport.WriteFile(outputFBXPath, parsed); err != nil {
+			return err
+		}
 	}
 
 	logger.logf("conversion complete")
