@@ -276,3 +276,5 @@ func TestParseUVSetIDGapHandled(t *testing.T) {
 	require.NotNil(t, parsed.LODs[0].UVSets[2])
 	assert.InDelta(t, float32(0.9), parsed.LODs[0].UVSets[2][0].U, 1e-6)
 }
+
+// --- Integration tests ---
