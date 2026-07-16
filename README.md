@@ -4,6 +4,16 @@ This repo contains tooling to convert Bohemia Interactive P3D files from ODOLv6 
 
 ## Usage
 
+### Web
+
+The tool is available in your browser at [tools.dzhosts.com](https://tools.dzhosts.com/p3d-converter/). This is the easiest way to use it, and it should work on any platform.
+
+![The web browser version of the tool](.github/readme/web.png)
+
+### CLI
+
+If you'd like the tool locally, you can build it from source or get the latest release from [GitHub](https://github.com/jmhobbs/odol/releases)
+
 The tool takes an input P3D file and emits an MLOD version and a model.cfg file to match.  Optionally, you can export the highest resolution LOD to FBX.
 
 ```
