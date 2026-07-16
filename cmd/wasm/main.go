@@ -15,11 +15,13 @@ import (
 	"syscall/js"
 
 	"github.com/jmhobbs/odol/internal/convert"
+	"github.com/jmhobbs/odol/internal/detector"
 )
 
 func main() {
 	js.Global().Set("odolConvertToMLOD", js.FuncOf(convertToMLOD))
 	js.Global().Set("odolConvertToFBX", js.FuncOf(convertToFBX))
+	js.Global().Set("odolDetectFormat", js.FuncOf(detectFormat))
 	select {}
 }
 
@@ -63,6 +65,34 @@ func convertToFBX(_ js.Value, args []js.Value) any {
 			return "", nil, err
 		}
 		return name + ".fbx", fbx, nil
+	})
+}
+
+// detectFormat(data Uint8Array) -> {ok, family, error}
+// family is one of detector.P3DFamily's values ("ODOL", "MLOD", "DEMO").
+// Callers only need the file's first ~16 bytes to get an answer - the
+// caller decides how much of the file to send.
+func detectFormat(_ js.Value, args []js.Value) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errorResult(fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	if len(args) < 1 {
+		return errorResult("odolDetectFormat: expected 1 argument (data)")
+	}
+	data := make([]byte, args[0].Get("length").Int())
+	js.CopyBytesToGo(data, args[0])
+
+	format, err := detector.Detect(bytes.NewReader(data))
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	return js.ValueOf(map[string]any{
+		"ok":     true,
+		"family": string(format.Family),
 	})
 }
 

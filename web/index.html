@@ -23,6 +23,24 @@
   #status.error {
     color: #b00020;
   }
+  #viewer-wrap {
+    margin-top: 1rem;
+  }
+  #viewer {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background: #22252a;
+    border-radius: 4px;
+  }
+  #viewer-caption {
+    margin-top: 0.35rem;
+    font-size: 0.85rem;
+    color: #666;
+  }
+  #viewer-controls {
+    font-size: 0.85rem;
+  }
 </style>
 </head>
 <body>
@@ -36,12 +54,29 @@
 <p><input type="file" id="file-input" accept=".p3d"></p>
 <p>
   <button id="btn-mlod" disabled>Export MLOD + model.cfg</button>
-  <button id="btn-fbx-binary" disabled>Export FBX (binary)</button>
+  <button id="btn-fbx-binary" disabled>Export FBX</button>
 </p>
 <div id="status"></div>
+<div id="viewer-wrap">
+  <canvas id="viewer"></canvas>
+  <p id="viewer-controls">
+    <label><input type="checkbox" id="checker-toggle" /> Checkerboard Texture</label>
+  </p>
+  <p id="viewer-caption">
+    Preview of the converted FBX geometry. Drag to rotate, scroll to zoom.
+  </p>
+</div>
 <p>
   Also available as a command line tool, <a href="https://github.com/jmhobbs/odol">github.com/jmhobbs/odol</a>
 </p>
-<script src="main.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="main.js"></script>
 </body>
 </html>
