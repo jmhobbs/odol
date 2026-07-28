@@ -11,9 +11,7 @@ import (
 
 func minimalScene() *meshScene {
 	return &meshScene{
-		modelName: "TestModel",
-		geometry:  geometryData{id: 1},
-		mesh:      meshData{id: 2},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
 	}
 }
 
@@ -62,8 +60,7 @@ func TestWriteASCIIDefinitionsNoMaterials(t *testing.T) {
 
 func TestWriteASCIIDefinitionsWithMaterials(t *testing.T) {
 	s := &meshScene{
-		geometry:  geometryData{id: 1},
-		mesh:      meshData{id: 2},
+		parts:     []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
 		materials: []materialData{{id: 3, name: "Mat_0"}, {id: 4, name: "Mat_1"}},
 	}
 	var buf bytes.Buffer
@@ -80,28 +77,46 @@ func TestWriteASCIIDefinitionsWithMaterials(t *testing.T) {
 
 func TestWriteASCIIDefinitionsModelCountIncludesProxies(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh:     meshData{id: 2},
-		proxies:  []proxyData{{id: 3}, {id: 4}},
+		parts:   []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		proxies: []proxyData{{id: 3}, {id: 4}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
 
 	out := buf.String()
-	// Model count = 1 mesh + 2 proxies = 3
+	// Model count = 1 part + 2 proxies = 3
 	assert.Contains(t, out, "\t\tCount: 3\n")
+}
+
+func TestWriteASCIIDefinitionsModelCountIncludesAllParts(t *testing.T) {
+	s := &meshScene{
+		parts: []meshPart{
+			{name: "object_NNN1", geomID: 1, modelID: 2},
+			{name: "object_NNN2", geomID: 3, modelID: 4},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, writeASCII(&buf, s))
+
+	out := buf.String()
+	// One ObjectType entry each for Geometry and Model, both with count 2
+	// (2 parts, no proxies/selections) - not one entry per part.
+	assert.Equal(t, 2, strings.Count(out, "\t\tCount: 2\n"))
 }
 
 func TestWriteASCIIGeometryVertexArrays(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{
-			id:        1,
-			vertices:  []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
-			polyIndex: []int32{0, 1, -3},
-			normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
-			uvSets:    [][]float64{{0, 0, 1, 0, 0.5, 1}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:    "object_NNN1",
+			geomID:  1,
+			modelID: 2,
+			geometry: geometryData{
+				vertices:  []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
+				polyIndex: []int32{0, 1, -3},
+				normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
+				uvSets:    [][]float64{{0, 0, 1, 0, 0.5, 1}},
+			},
+		}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -119,11 +134,12 @@ func TestWriteASCIIGeometryVertexArrays(t *testing.T) {
 
 func TestWriteASCIISingleUVSetEmitsLayerElementUV0Only(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{
-			id:     1,
-			uvSets: [][]float64{{0, 0, 1, 0, 0.5, 1}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:     "object_NNN1",
+			geomID:   1,
+			modelID:  2,
+			geometry: geometryData{uvSets: [][]float64{{0, 0, 1, 0, 0.5, 1}}},
+		}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -135,11 +151,12 @@ func TestWriteASCIISingleUVSetEmitsLayerElementUV0Only(t *testing.T) {
 
 func TestWriteASCIITwoUVSetsEmitsBothLayerElements(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{
-			id:     1,
-			uvSets: [][]float64{{0, 0, 1, 0}, {0.5, 0.5, 0.6, 0.6}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:     "object_NNN1",
+			geomID:   1,
+			modelID:  2,
+			geometry: geometryData{uvSets: [][]float64{{0, 0, 1, 0}, {0.5, 0.5, 0.6, 0.6}}},
+		}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -153,11 +170,12 @@ func TestWriteASCIITwoUVSetsEmitsBothLayerElements(t *testing.T) {
 
 func TestWriteASCIITwoUVSetsLayerBlockContainsBothEntries(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{
-			id:     1,
-			uvSets: [][]float64{{0, 0}, {1, 1}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:     "object_NNN1",
+			geomID:   1,
+			modelID:  2,
+			geometry: geometryData{uvSets: [][]float64{{0, 0}, {1, 1}}},
+		}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -171,11 +189,14 @@ func TestWriteASCIITwoUVSetsLayerBlockContainsBothEntries(t *testing.T) {
 func TestWriteASCIIUVArrayCountCorrectPerChannel(t *testing.T) {
 	// 3 face-vertices per channel, 2 UV sets
 	s := &meshScene{
-		geometry: geometryData{
-			id:     1,
-			uvSets: [][]float64{{0, 0, 1, 0, 0.5, 1}, {0.1, 0.1, 0.2, 0.2, 0.3, 0.3}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:    "object_NNN1",
+			geomID:  1,
+			modelID: 2,
+			geometry: geometryData{
+				uvSets: [][]float64{{0, 0, 1, 0, 0.5, 1}, {0.1, 0.1, 0.2, 0.2, 0.3, 0.3}},
+			},
+		}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -187,8 +208,12 @@ func TestWriteASCIIUVArrayCountCorrectPerChannel(t *testing.T) {
 
 func TestWriteASCIIConnections(t *testing.T) {
 	s := &meshScene{
-		geometry:  geometryData{id: 1},
-		mesh:      meshData{id: 2},
+		parts: []meshPart{{
+			name:           "object_NNN1",
+			geomID:         1,
+			modelID:        2,
+			localMaterials: []int{0},
+		}},
 		materials: []materialData{{id: 3, name: "Mat_0"}},
 		proxies:   []proxyData{{id: 4, name: "Proxy_0"}},
 	}
@@ -201,28 +226,24 @@ func TestWriteASCIIConnections(t *testing.T) {
 	assert.Contains(t, out, `C: "OO",1,2`)
 	// Model -> root (0)
 	assert.Contains(t, out, `C: "OO",2,0`)
-	// Material -> Model
+	// Material -> Model (this part uses it, per localMaterials)
 	assert.Contains(t, out, `C: "OO",3,2`)
-	// Proxy -> Model
-	assert.Contains(t, out, `C: "OO",4,2`)
+	// Proxy -> root (0) - proxies are scene-level, not attached to any one part
+	assert.Contains(t, out, `C: "OO",4,0`)
 }
 
 func TestWriteASCIIMeshModelProperties(t *testing.T) {
 	s := &meshScene{
-		modelName: "MyModel",
-		geometry:  geometryData{id: 1},
-		mesh: meshData{
-			id:            2,
-			sourceFamily:  "ODOL",
-			sourceVersion: 7,
-			lodResolution: 1.5,
-		},
+		parts:         []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		sourceFamily:  "ODOL",
+		sourceVersion: 7,
+		lodResolution: 1.5,
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
 
 	out := buf.String()
-	assert.Contains(t, out, `"Model::MyModel"`)
+	assert.Contains(t, out, `"Model::object_NNN1"`)
 	assert.Contains(t, out, `"ODOL_SourceFamily", "KString", "", "", "ODOL"`)
 	assert.Contains(t, out, `"ODOL_SourceVersion", "int", "Integer", "", 7`)
 	assert.NotContains(t, out, `"ODOL_Selections"`)
@@ -238,13 +259,8 @@ func TestWriteASCIINoSelectionsProducesNoSelectionNodes(t *testing.T) {
 
 func TestWriteASCIISelectionNullNodeName(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{id: 3, name: "engine"},
-			},
-		},
+		parts:      []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{{id: 3, name: "engine"}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -255,17 +271,14 @@ func TestWriteASCIISelectionNullNodeName(t *testing.T) {
 
 func TestWriteASCIISelectionProperties(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{
-					id:            3,
-					name:          "cargo",
-					vertexIndices: []uint32{0, 2},
-					vertexWeights: []byte{128, 255},
-					faceIndices:   []uint32{1, 3},
-				},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{
+			{
+				id:            3,
+				name:          "cargo",
+				vertexIndices: []uint32{0, 2},
+				vertexWeights: []byte{128, 255},
+				faceIndices:   []uint32{1, 3},
 			},
 		},
 	}
@@ -280,13 +293,10 @@ func TestWriteASCIISelectionProperties(t *testing.T) {
 
 func TestWriteASCIISelectionIsSectional(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{id: 3, name: "sect", isSectional: true},
-				{id: 4, name: "nosect", isSectional: false},
-			},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{
+			{id: 3, name: "sect", isSectional: true},
+			{id: 4, name: "nosect", isSectional: false},
 		},
 	}
 	var buf bytes.Buffer
@@ -299,13 +309,8 @@ func TestWriteASCIISelectionIsSectional(t *testing.T) {
 
 func TestWriteASCIISelectionEmptyIndicesEmitsEmptyString(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{id: 3, name: "empty"},
-			},
-		},
+		parts:      []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{{id: 3, name: "empty"}},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
@@ -317,13 +322,10 @@ func TestWriteASCIISelectionEmptyIndicesEmitsEmptyString(t *testing.T) {
 
 func TestWriteASCIIDefinitionsModelCountIncludesSelections(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{id: 5, name: "a"},
-				{id: 6, name: "b"},
-			},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{
+			{id: 5, name: "a"},
+			{id: 6, name: "b"},
 		},
 		proxies: []proxyData{{id: 3}, {id: 4}},
 	}
@@ -331,27 +333,25 @@ func TestWriteASCIIDefinitionsModelCountIncludesSelections(t *testing.T) {
 	require.NoError(t, writeASCII(&buf, s))
 
 	out := buf.String()
-	// Model count = 1 mesh + 2 proxies + 2 selections = 5
+	// Model count = 1 part + 2 proxies + 2 selections = 5
 	assert.Contains(t, out, "\t\tCount: 5\n")
 }
 
 func TestWriteASCIIConnectionsIncludeSelections(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{id: 3, name: "sel_a"},
-				{id: 4, name: "sel_b"},
-			},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{
+			{id: 3, name: "sel_a"},
+			{id: 4, name: "sel_b"},
 		},
 	}
 	var buf bytes.Buffer
 	require.NoError(t, writeASCII(&buf, s))
 
 	out := buf.String()
-	assert.Contains(t, out, `C: "OO",3,2`)
-	assert.Contains(t, out, `C: "OO",4,2`)
+	// selections connect to root (0), not to any one part
+	assert.Contains(t, out, `C: "OO",3,0`)
+	assert.Contains(t, out, `C: "OO",4,0`)
 }
 
 func TestWriteASCIINoTrailingWhitespace(t *testing.T) {
@@ -374,8 +374,13 @@ func TestWriteASCIILayerElementMaterialOmittedWhenNoMaterials(t *testing.T) {
 
 func TestWriteASCIIMaterialProperties(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1, matIndex: []int32{0}},
-		mesh:     meshData{id: 2},
+		parts: []meshPart{{
+			name:           "object_NNN1",
+			geomID:         1,
+			modelID:        2,
+			geometry:       geometryData{matIndex: []int32{0}},
+			localMaterials: []int{0},
+		}},
 		materials: []materialData{{
 			id:      3,
 			name:    "Mat_0",

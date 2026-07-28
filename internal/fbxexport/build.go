@@ -30,102 +30,8 @@ func buildScene(m *model.Model) (*meshScene, error) {
 	lod = &stripped
 
 	ids := &idCounter{}
-	geomID := ids.next()
-	meshID := ids.next()
 
-	vertices := make([]float64, 0, len(lod.Vertices)*3)
-	for _, v := range lod.Vertices {
-		vertices = append(vertices, float64(v.X), float64(v.Y), float64(v.Z))
-	}
-
-	var polyIndex []int32
-	var normals []float64
-	var primaryUVs []float64
-
-	// ODOL/MLOD face vertices are wound counter-clockwise when viewed from
-	// outside the surface; FBX (and DirectX/GPU-culling conventions
-	// generally) expects clockwise front-facing winding. Emitting vertices
-	// in reverse per-face order corrects this - readers that derive
-	// culling from winding order (e.g. ArmorPaint, real-time viewports)
-	// would otherwise cull every face, since our winding disagreed with
-	// our own (correctly-oriented) explicit normals. Confirmed by
-	// comparing the geometric normal (cross product from winding) against
-	// the exported vertex normal for both a canonical DayZ FBX export and
-	// our own output. NormalIndices and UVs are per-polygon-vertex
-	// ("Direct"-mapped) too, so they must be reversed in the same order to
-	// stay aligned slot-for-slot with the reversed indices.
-	for _, face := range lod.Faces {
-		n := len(face.Indices)
-
-		for slot := 0; slot < n; slot++ {
-			idx := face.Indices[n-1-slot]
-			if slot == n-1 {
-				polyIndex = append(polyIndex, -int32(idx)-1)
-			} else {
-				polyIndex = append(polyIndex, int32(idx))
-			}
-		}
-
-		for slot := 0; slot < n; slot++ {
-			srcI := n - 1 - slot
-			normalIdx := uint32(0)
-			if srcI < len(face.NormalIndices) {
-				normalIdx = face.NormalIndices[srcI]
-			}
-			if int(normalIdx) < len(lod.Normals) {
-				nrm := lod.Normals[normalIdx]
-				// Z is inverted relative to FBX's convention - confirmed
-				// against canonical DayZ FBX SDK output; X, Y, and vertex
-				// positions are not affected. See TestBuildSceneNormalZIsNegated.
-				normals = append(normals, float64(nrm.X), float64(nrm.Y), -float64(nrm.Z))
-			} else {
-				normals = append(normals, 0, 0, 0)
-			}
-		}
-
-		for slot := 0; slot < n; slot++ {
-			srcI := n - 1 - slot
-			var uv model.UV
-			if srcI < len(face.UVs) {
-				uv = face.UVs[srcI]
-			}
-			primaryUVs = append(primaryUVs, float64(uv.U), float64(uv.V))
-		}
-	}
-
-	uvSets := [][]float64{primaryUVs}
-	for setIdx := 1; setIdx < len(lod.UVSets); setIdx++ {
-		uvSet := lod.UVSets[setIdx]
-		var channel []float64
-		for _, face := range lod.Faces {
-			n := len(face.Indices)
-			for slot := 0; slot < n; slot++ {
-				vi := face.Indices[n-1-slot]
-				var uv model.UV
-				if int(vi) < len(uvSet) {
-					uv = uvSet[vi]
-				}
-				channel = append(channel, float64(uv.U), float64(uv.V))
-			}
-		}
-		uvSets = append(uvSets, channel)
-	}
-
-	var matKeys []materialKey
-	matIndexOf := make(map[materialKey]int32)
-	for _, face := range lod.Faces {
-		key := materialKey{face.Texture, face.Material}
-		if _, ok := matIndexOf[key]; !ok {
-			matIndexOf[key] = int32(len(matKeys))
-			matKeys = append(matKeys, key)
-		}
-	}
-
-	matIndex := make([]int32, len(lod.Faces))
-	for i, face := range lod.Faces {
-		matIndex[i] = matIndexOf[materialKey{face.Texture, face.Material}]
-	}
-
+	matKeys, matIndexOf := collectMaterialKeys(lod.Faces)
 	materials := make([]materialData, len(matKeys))
 	for i, key := range matKeys {
 		materials[i] = materialData{
@@ -136,6 +42,12 @@ func buildScene(m *model.Model) (*meshScene, error) {
 			videoID:   ids.next(),
 			textureID: ids.next(),
 		}
+	}
+
+	groups := groupConnectedComponents(lod.Faces, len(lod.Vertices))
+	parts := make([]meshPart, len(groups))
+	for i, group := range groups {
+		parts[i] = buildPart(lod, group, i+1, matIndexOf, ids)
 	}
 
 	proxies := make([]proxyData, len(lod.Proxies))
@@ -165,29 +77,148 @@ func buildScene(m *model.Model) (*meshScene, error) {
 	propKeys, filteredProps := filteredProperties(lod)
 
 	return &meshScene{
-		modelName: m.Name,
+		parts:            parts,
+		materials:        materials,
+		proxies:          proxies,
+		selections:       selections,
+		sourceFamily:     m.Source.Family,
+		sourceVersion:    m.Source.Version,
+		lodResolution:    lod.Resolution,
+		odolProperties:   filteredProps,
+		odolPropertyKeys: propKeys,
+		iconColor:        lod.IconColor,
+		selectedColor:    lod.SelectedColor,
+	}, nil
+}
+
+// collectMaterialKeys returns the distinct (texture, material) pairs used
+// across faces, in order of first appearance, along with a lookup from key
+// to its index in that list. Shared across all parts of a scene, since a
+// texture/material can be used by faces in more than one part (e.g. a camo
+// pattern spread across many small physically-separate pieces).
+func collectMaterialKeys(faces []model.Face) ([]materialKey, map[materialKey]int32) {
+	var matKeys []materialKey
+	matIndexOf := make(map[materialKey]int32)
+	for _, face := range faces {
+		key := materialKey{face.Texture, face.Material}
+		if _, ok := matIndexOf[key]; !ok {
+			matIndexOf[key] = int32(len(matKeys))
+			matKeys = append(matKeys, key)
+		}
+	}
+	return matKeys, matIndexOf
+}
+
+// buildPart builds one exported mesh object from a connected component of
+// the source LOD's faces, remapping vertex/material references to the
+// part's own local index space. partNumber is 1-based and becomes part of
+// the part's name ("object_NNN{partNumber}").
+func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf map[materialKey]int32, ids *idCounter) meshPart {
+	vertexRemap := make(map[uint32]int32, len(group.faceIndices))
+	var vertices []float64
+	var polyIndex []int32
+	var normals []float64
+	var primaryUVs []float64
+
+	localVertexIndex := func(orig uint32) int32 {
+		if li, ok := vertexRemap[orig]; ok {
+			return li
+		}
+		li := int32(len(vertices) / 3)
+		vertexRemap[orig] = li
+		v := lod.Vertices[orig]
+		vertices = append(vertices, float64(v.X), float64(v.Y), float64(v.Z))
+		return li
+	}
+
+	// See the winding-order comment in the pre-split version of this
+	// function (git history) for why vertices/normals/UVs are emitted in
+	// reverse per-face order - unchanged by the per-part split, just scoped
+	// to this component's own faces.
+	for _, faceIdx := range group.faceIndices {
+		face := lod.Faces[faceIdx]
+		n := len(face.Indices)
+
+		for slot := 0; slot < n; slot++ {
+			localIdx := localVertexIndex(face.Indices[n-1-slot])
+			if slot == n-1 {
+				polyIndex = append(polyIndex, -localIdx-1)
+			} else {
+				polyIndex = append(polyIndex, localIdx)
+			}
+		}
+
+		for slot := 0; slot < n; slot++ {
+			srcI := n - 1 - slot
+			normalIdx := uint32(0)
+			if srcI < len(face.NormalIndices) {
+				normalIdx = face.NormalIndices[srcI]
+			}
+			if int(normalIdx) < len(lod.Normals) {
+				nrm := lod.Normals[normalIdx]
+				normals = append(normals, float64(nrm.X), float64(nrm.Y), -float64(nrm.Z))
+			} else {
+				normals = append(normals, 0, 0, 0)
+			}
+		}
+
+		for slot := 0; slot < n; slot++ {
+			srcI := n - 1 - slot
+			var uv model.UV
+			if srcI < len(face.UVs) {
+				uv = face.UVs[srcI]
+			}
+			primaryUVs = append(primaryUVs, float64(uv.U), float64(uv.V))
+		}
+	}
+
+	uvSets := [][]float64{primaryUVs}
+	for setIdx := 1; setIdx < len(lod.UVSets); setIdx++ {
+		uvSet := lod.UVSets[setIdx]
+		var channel []float64
+		for _, faceIdx := range group.faceIndices {
+			face := lod.Faces[faceIdx]
+			n := len(face.Indices)
+			for slot := 0; slot < n; slot++ {
+				vi := face.Indices[n-1-slot]
+				var uv model.UV
+				if int(vi) < len(uvSet) {
+					uv = uvSet[vi]
+				}
+				channel = append(channel, float64(uv.U), float64(uv.V))
+			}
+		}
+		uvSets = append(uvSets, channel)
+	}
+
+	var localMaterials []int
+	localIndexOfGlobal := make(map[int32]int32)
+	matIndex := make([]int32, len(group.faceIndices))
+	for i, faceIdx := range group.faceIndices {
+		face := lod.Faces[faceIdx]
+		globalIdx := matIndexOf[materialKey{face.Texture, face.Material}]
+		localIdx, ok := localIndexOfGlobal[globalIdx]
+		if !ok {
+			localIdx = int32(len(localMaterials))
+			localIndexOfGlobal[globalIdx] = localIdx
+			localMaterials = append(localMaterials, int(globalIdx))
+		}
+		matIndex[i] = localIdx
+	}
+
+	return meshPart{
+		name:    fmt.Sprintf("object_NNN%d", partNumber),
+		geomID:  ids.next(),
+		modelID: ids.next(),
 		geometry: geometryData{
-			id:        geomID,
 			vertices:  vertices,
 			polyIndex: polyIndex,
 			normals:   normals,
 			uvSets:    uvSets,
 			matIndex:  matIndex,
 		},
-		mesh: meshData{
-			id:               meshID,
-			sourceFamily:     m.Source.Family,
-			sourceVersion:    m.Source.Version,
-			lodResolution:    lod.Resolution,
-			odolProperties:   filteredProps,
-			odolPropertyKeys: propKeys,
-			selections:       selections,
-			iconColor:        lod.IconColor,
-			selectedColor:    lod.SelectedColor,
-		},
-		materials: materials,
-		proxies:   proxies,
-	}, nil
+		localMaterials: localMaterials,
+	}
 }
 
 // filteredProperties returns the LOD property map and an ordered key slice,

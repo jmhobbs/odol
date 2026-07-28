@@ -28,23 +28,26 @@ func TestBuildScenePolyIndex(t *testing.T) {
 	m := &model.Model{
 		LODs: []model.LOD{{
 			Resolution: 1.0,
-			Vertices:   []model.Vector3{{}, {}, {}, {}},
+			Vertices:   []model.Vector3{{}, {}, {}, {}, {}, {}},
 			Normals:    []model.Vector3{{X: 0, Y: 0, Z: 1}},
 			Faces: []model.Face{
 				{Indices: []uint32{0, 1, 2}},    // triangle
-				{Indices: []uint32{0, 1, 2, 3}}, // quad
-				{Indices: []uint32{5, 0}},       // edge: vertex 0 as last -> -1
+				{Indices: []uint32{0, 1, 2, 3}}, // quad, shares vertices 0-2 with the triangle
+				{Indices: []uint32{5, 0}},       // edge, shares vertex 0 - all three faces are one connected component
 			},
 		}},
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1, "all three faces share vertices, so they form a single connected component")
 	// Face vertices are emitted in reverse per-face order (ODOL/MLOD winding
 	// is CCW from outside; FBX expects CW) - see the comment in build.go.
-	// triangle [0,1,2] reversed -> 2, 1, -(0+1) = -1
-	// quad     [0,1,2,3] reversed -> 3, 2, 1, -(0+1) = -1
-	// edge     [5,0] reversed -> 0, -(5+1) = -6
-	assert.Equal(t, []int32{2, 1, -1, 3, 2, 1, -1, 0, -6}, s.geometry.polyIndex)
+	// Vertex indices are also remapped to each part's own local, 0-based
+	// space in order of first appearance:
+	//   triangle [0,1,2] reversed -> orig 2,1,0 -> first-seen locals 0,1,2 -> emitted 0, 1, -(2+1)=-3
+	//   quad [0,1,2,3] reversed -> orig 3,2,1,0 -> orig 3 is new (local 3); 2,1,0 already seen (locals 0,1,2) -> emitted 3, 0, 1, -(2+1)=-3
+	//   edge [5,0] reversed -> orig 0,5 -> orig 0 already seen (local 2); orig 5 is new (local 4) -> emitted 2, -(4+1)=-5
+	assert.Equal(t, []int32{0, 1, -3, 3, 0, 1, -3, 2, -5}, s.parts[0].geometry.polyIndex)
 }
 
 func TestBuildSceneNormalsViaIndices(t *testing.T) {
@@ -65,11 +68,12 @@ func TestBuildSceneNormalsViaIndices(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1)
 	// Face slots are reversed (see TestBuildScenePolyIndex), so
 	// NormalIndices [2,0,1] is read back-to-front: normals[1], normals[0], normals[2].
 	// Z is negated (see TestBuildSceneNormalZIsNegated).
 	want := []float64{0, 1, 0, 1, 0, 0, 0, 0, -1}
-	assert.Equal(t, want, s.geometry.normals)
+	assert.Equal(t, want, s.parts[0].geometry.normals)
 }
 
 // TestBuildSceneNormalZIsNegated documents a real, confirmed-by-comparison-
@@ -94,10 +98,12 @@ func TestBuildSceneNormalZIsNegated(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1)
+	normals := s.parts[0].geometry.normals
 	for i := 0; i < 3; i++ {
-		assert.Equal(t, float64(float32(0.6)), s.geometry.normals[i*3], "X unchanged")
-		assert.Equal(t, float64(float32(0.2)), s.geometry.normals[i*3+1], "Y unchanged")
-		assert.Equal(t, -float64(float32(0.8)), s.geometry.normals[i*3+2], "Z negated")
+		assert.Equal(t, float64(float32(0.6)), normals[i*3], "X unchanged")
+		assert.Equal(t, float64(float32(0.2)), normals[i*3+1], "Y unchanged")
+		assert.Equal(t, -float64(float32(0.8)), normals[i*3+2], "Z negated")
 	}
 }
 
@@ -123,12 +129,14 @@ func TestBuildSceneStripsProxySelectionsAndTheirGeometry(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 
-	require.Len(t, s.mesh.selections, 1)
-	assert.Equal(t, "cargo", s.mesh.selections[0].name)
-	// Only the real triangle's 3 vertices remain (9 floats), and the
-	// proxy face is gone from polyIndex (3 entries instead of 6).
-	assert.Equal(t, []float64{0, 0, 0, 1, 0, 0, 2, 0, 0}, s.geometry.vertices)
-	assert.Len(t, s.geometry.polyIndex, 3)
+	require.Len(t, s.selections, 1)
+	assert.Equal(t, "cargo", s.selections[0].name)
+	require.Len(t, s.parts, 1, "the proxy face's own vertices are stripped along with it")
+	// The one surviving face is [0,1,2]; reversed order visits orig 2,1,0,
+	// assigning first-seen locals 0,1,2 respectively - so the emitted
+	// vertex array is [vertex2, vertex1, vertex0].
+	assert.Equal(t, []float64{2, 0, 0, 1, 0, 0, 0, 0, 0}, s.parts[0].geometry.vertices)
+	assert.Len(t, s.parts[0].geometry.polyIndex, 3)
 }
 
 func TestBuildSceneNormalIndexOutOfRange(t *testing.T) {
@@ -144,8 +152,9 @@ func TestBuildSceneNormalIndexOutOfRange(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1)
 	// index 99 is out of range -> zero vector
-	assert.Equal(t, []float64{1, 0, 0, 0, 0, 0, 1, 0, 0}, s.geometry.normals)
+	assert.Equal(t, []float64{1, 0, 0, 0, 0, 0, 1, 0, 0}, s.parts[0].geometry.normals)
 }
 
 func TestBuildSceneNormalsMissingIndices(t *testing.T) {
@@ -162,7 +171,8 @@ func TestBuildSceneNormalsMissingIndices(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	assert.Equal(t, []float64{1, 0, 0, 1, 0, 0, 1, 0, 0}, s.geometry.normals)
+	require.Len(t, s.parts, 1)
+	assert.Equal(t, []float64{1, 0, 0, 1, 0, 0, 1, 0, 0}, s.parts[0].geometry.normals)
 }
 
 func TestBuildSceneUVs(t *testing.T) {
@@ -185,6 +195,7 @@ func TestBuildSceneUVs(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1)
 	// Face slots are reversed (see TestBuildScenePolyIndex), so UVs are
 	// read back-to-front.
 	want := []float64{
@@ -192,7 +203,7 @@ func TestBuildSceneUVs(t *testing.T) {
 		float64(float32(0.3)), float64(float32(0.4)),
 		float64(float32(0.1)), float64(float32(0.2)),
 	}
-	assert.Equal(t, want, s.geometry.uvSets[0])
+	assert.Equal(t, want, s.parts[0].geometry.uvSets[0])
 }
 
 func TestBuildSceneUVsMissing(t *testing.T) {
@@ -208,13 +219,15 @@ func TestBuildSceneUVsMissing(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	assert.Equal(t, []float64{0, 0, 0, 0, 0, 0}, s.geometry.uvSets[0])
+	require.Len(t, s.parts, 1)
+	assert.Equal(t, []float64{0, 0, 0, 0, 0, 0}, s.parts[0].geometry.uvSets[0])
 }
 
 func TestBuildSceneSingleUVSetProducesLengthOne(t *testing.T) {
 	s, err := buildScene(triangleModel())
 	require.NoError(t, err)
-	assert.Len(t, s.geometry.uvSets, 1)
+	require.Len(t, s.parts, 1)
+	assert.Len(t, s.parts[0].geometry.uvSets, 1)
 }
 
 func TestBuildSceneTwoUVSetsProducesLengthTwo(t *testing.T) {
@@ -226,7 +239,8 @@ func TestBuildSceneTwoUVSetsProducesLengthTwo(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	assert.Len(t, s.geometry.uvSets, 2)
+	require.Len(t, s.parts, 1)
+	assert.Len(t, s.parts[0].geometry.uvSets, 2)
 }
 
 func TestBuildSceneAdditionalUVSetIndexedByFaceIndices(t *testing.T) {
@@ -238,30 +252,34 @@ func TestBuildSceneAdditionalUVSetIndexedByFaceIndices(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1)
 	// Face slots are reversed (see TestBuildScenePolyIndex): reading
 	// face.Indices = [2,0,1] back-to-front gives 1, 0, 2 →
 	// uvSets[1][1], uvSets[1][0], uvSets[1][2]
+	// (this additional UV set is looked up by original vertex index, not
+	// the part's remapped local index - see the setIdx loop in buildPart)
 	want := []float64{
 		float64(float32(0.3)), float64(float32(0.4)),
 		float64(float32(0.1)), float64(float32(0.2)),
 		float64(float32(0.5)), float64(float32(0.6)),
 	}
-	assert.Equal(t, want, s.geometry.uvSets[1])
+	assert.Equal(t, want, s.parts[0].geometry.uvSets[1])
 }
 
 func TestBuildSceneAdditionalUVIndexOutOfRangeFallsToZero(t *testing.T) {
 	m := triangleModel()
-	m.LODs[0].Faces[0].Indices = []uint32{0, 1, 99} // index 99 exceeds uvSet length
+	m.LODs[0].Faces[0].Indices = []uint32{0, 1, 2} // valid vertex indices; UV lookup below is what's out of range
 	m.LODs[0].UVSets = [][]model.UV{
 		nil,
-		{{U: 0.1, V: 0.2}, {U: 0.3, V: 0.4}}, // only 2 entries
+		{{U: 0.1, V: 0.2}, {U: 0.3, V: 0.4}}, // only 2 entries; vertex index 2 exceeds it
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	// Face slots are reversed, so vertex 99 (originally last) is read
-	// first: slot 0 → out of range → {0, 0}
-	assert.Equal(t, float64(0), s.geometry.uvSets[1][0])
-	assert.Equal(t, float64(0), s.geometry.uvSets[1][1])
+	require.Len(t, s.parts, 1)
+	// Face slots are reversed, so vertex 2 (originally last) is read
+	// first: slot 0 → uvSet index 2 → out of range → {0, 0}
+	assert.Equal(t, float64(0), s.parts[0].geometry.uvSets[1][0])
+	assert.Equal(t, float64(0), s.parts[0].geometry.uvSets[1][1])
 }
 
 func TestBuildSceneUVSetsOnlyPrimaryEmitsOneSet(t *testing.T) {
@@ -272,7 +290,8 @@ func TestBuildSceneUVSetsOnlyPrimaryEmitsOneSet(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	assert.Len(t, s.geometry.uvSets, 1)
+	require.Len(t, s.parts, 1)
+	assert.Len(t, s.parts[0].geometry.uvSets, 1)
 }
 
 func TestBuildSceneMaterialBucketing(t *testing.T) {
@@ -290,19 +309,24 @@ func TestBuildSceneMaterialBucketing(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
+	require.Len(t, s.parts, 1, "all three faces share the same vertices, so they're one connected component")
 	assert.Len(t, s.materials, 2)
-	assert.Equal(t, []int32{0, 1, 0}, s.geometry.matIndex)
+	assert.Equal(t, []int32{0, 1, 0}, s.parts[0].geometry.matIndex)
 }
 
 func TestBuildSceneVertexUpcast(t *testing.T) {
 	m := triangleModel()
-	m.LODs[0].Vertices = []model.Vector3{{X: 1.5, Y: -2.5, Z: 0.125}}
+	m.LODs[0].Vertices = []model.Vector3{{X: 1.5, Y: -2.5, Z: 0.125}, {}, {}}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	require.Len(t, s.geometry.vertices, 3)
-	assert.Equal(t, float64(float32(1.5)), s.geometry.vertices[0])
-	assert.Equal(t, float64(float32(-2.5)), s.geometry.vertices[1])
-	assert.Equal(t, float64(float32(0.125)), s.geometry.vertices[2])
+	require.Len(t, s.parts, 1)
+	verts := s.parts[0].geometry.vertices
+	require.Len(t, verts, 9)
+	// The single face [0,1,2] is read in reverse order, so vertex 0 (the
+	// interesting one) is emitted last, as the third local vertex.
+	assert.Equal(t, float64(float32(1.5)), verts[6])
+	assert.Equal(t, float64(float32(-2.5)), verts[7])
+	assert.Equal(t, float64(float32(0.125)), verts[8])
 }
 
 func TestBuildSceneIDOrdering(t *testing.T) {
@@ -310,9 +334,11 @@ func TestBuildSceneIDOrdering(t *testing.T) {
 	m.LODs[0].Faces[0].Texture = "x.paa"
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), s.geometry.id)
-	assert.Equal(t, int64(2), s.mesh.id)
-	assert.Equal(t, int64(3), s.materials[0].id)
+	require.Len(t, s.parts, 1)
+	// materials are allocated (and their IDs assigned) before parts.
+	assert.Equal(t, int64(1), s.materials[0].id)
+	assert.Equal(t, int64(4), s.parts[0].geomID)
+	assert.Equal(t, int64(5), s.parts[0].modelID)
 }
 
 func TestBuildSceneMaterialAllocatesVideoAndTextureIDs(t *testing.T) {
@@ -338,7 +364,7 @@ func TestBuildSceneNoSelectionsProducesEmptySlice(t *testing.T) {
 	m := triangleModel()
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	assert.Empty(t, s.mesh.selections)
+	assert.Empty(t, s.selections)
 }
 
 func TestBuildSceneSelectionFieldsCopied(t *testing.T) {
@@ -354,8 +380,8 @@ func TestBuildSceneSelectionFieldsCopied(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	require.Len(t, s.mesh.selections, 1)
-	sel := s.mesh.selections[0]
+	require.Len(t, s.selections, 1)
+	sel := s.selections[0]
 	assert.Equal(t, "cargo", sel.name)
 	assert.True(t, sel.isSectional)
 	assert.Equal(t, []uint32{0, 2}, sel.vertexIndices)
@@ -370,11 +396,11 @@ func TestBuildSceneSelectionNilWeightsNoParanic(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	require.Len(t, s.mesh.selections, 1)
-	assert.Nil(t, s.mesh.selections[0].vertexWeights)
+	require.Len(t, s.selections, 1)
+	assert.Nil(t, s.selections[0].vertexWeights)
 }
 
-func TestBuildSceneSelectionIDsAfterProxies(t *testing.T) {
+func TestBuildSceneSelectionIDsAfterProxiesAndParts(t *testing.T) {
 	m := triangleModel()
 	m.LODs[0].Faces[0].Texture = "x.paa"
 	m.LODs[0].Proxies = []model.Proxy{{ModelPath: "proxy.p3d"}}
@@ -384,7 +410,63 @@ func TestBuildSceneSelectionIDsAfterProxies(t *testing.T) {
 	}
 	s, err := buildScene(m)
 	require.NoError(t, err)
-	// geom=1, mesh=2, mat=3, mat.videoID=4, mat.textureID=5, proxy=6, sel_a=7, sel_b=8
-	assert.Equal(t, int64(7), s.mesh.selections[0].id)
-	assert.Equal(t, int64(8), s.mesh.selections[1].id)
+	// mat=1, mat.videoID=2, mat.textureID=3, part.geomID=4, part.modelID=5, proxy=6, sel_a=7, sel_b=8
+	require.Len(t, s.selections, 2)
+	assert.Equal(t, int64(7), s.selections[0].id)
+	assert.Equal(t, int64(8), s.selections[1].id)
+}
+
+func twoDisjointTrianglesModel() *model.Model {
+	return &model.Model{
+		LODs: []model.LOD{{
+			Resolution: 1.0,
+			Vertices:   []model.Vector3{{X: 0}, {X: 1}, {X: 2}, {X: 10}, {X: 11}, {X: 12}},
+			Faces: []model.Face{
+				{Indices: []uint32{0, 1, 2}, Texture: "a.paa"},
+				{Indices: []uint32{3, 4, 5}, Texture: "b.paa"},
+			},
+		}},
+	}
+}
+
+func TestBuildSceneSplitsDisconnectedGeometryIntoParts(t *testing.T) {
+	s, err := buildScene(twoDisjointTrianglesModel())
+	require.NoError(t, err)
+	require.Len(t, s.parts, 2)
+	assert.Equal(t, "object_NNN1", s.parts[0].name)
+	assert.Equal(t, "object_NNN2", s.parts[1].name)
+	// Each part only has its own 3 vertices, not the whole LOD's 6.
+	assert.Len(t, s.parts[0].geometry.vertices, 9)
+	assert.Len(t, s.parts[1].geometry.vertices, 9)
+}
+
+func TestBuildScenePartMaterialsScopedToUsage(t *testing.T) {
+	s, err := buildScene(twoDisjointTrianglesModel())
+	require.NoError(t, err)
+	require.Len(t, s.parts, 2)
+	require.Len(t, s.materials, 2)
+
+	// Each part uses a different texture, so each should reference exactly
+	// the one global material it actually needs, not both.
+	require.Len(t, s.parts[0].localMaterials, 1)
+	require.Len(t, s.parts[1].localMaterials, 1)
+	assert.NotEqual(t, s.parts[0].localMaterials[0], s.parts[1].localMaterials[0])
+	assert.Equal(t, "a.paa", s.materials[s.parts[0].localMaterials[0]].texture)
+	assert.Equal(t, "b.paa", s.materials[s.parts[1].localMaterials[0]].texture)
+}
+
+func TestBuildScenePartsShareMaterialAcrossParts(t *testing.T) {
+	m := twoDisjointTrianglesModel()
+	m.LODs[0].Faces[1].Texture = "a.paa" // both disconnected parts now use the same texture
+
+	s, err := buildScene(m)
+	require.NoError(t, err)
+	require.Len(t, s.parts, 2)
+	// Only one material should be created, matching the mich2001.fbx
+	// reference case (163 disconnected parts, all sharing one Material) -
+	// see TestParityConnectedComponentsMich2001.
+	require.Len(t, s.materials, 1)
+	require.Len(t, s.parts[0].localMaterials, 1)
+	require.Len(t, s.parts[1].localMaterials, 1)
+	assert.Equal(t, s.parts[0].localMaterials[0], s.parts[1].localMaterials[0])
 }

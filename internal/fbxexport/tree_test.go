@@ -150,8 +150,7 @@ func findObjectType(defs *node, typeName string) *node {
 
 func TestBuildDocumentNodesDefinitionsWithMaterials(t *testing.T) {
 	s := &meshScene{
-		geometry:  geometryData{id: 1},
-		mesh:      meshData{id: 2},
+		parts:     []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
 		materials: []materialData{{id: 3, name: "Mat_0"}, {id: 4, name: "Mat_1"}},
 	}
 	nodes := buildDocumentNodes(s, testTime)
@@ -164,30 +163,45 @@ func TestBuildDocumentNodesDefinitionsWithMaterials(t *testing.T) {
 
 func TestBuildDocumentNodesDefinitionsModelCountIncludesProxiesAndSelections(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id:         2,
-			selections: []selectionData{{id: 5, name: "a"}, {id: 6, name: "b"}},
-		},
-		proxies: []proxyData{{id: 3}, {id: 4}},
+		parts:      []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{{id: 5, name: "a"}, {id: 6, name: "b"}},
+		proxies:    []proxyData{{id: 3}, {id: 4}},
 	}
 	nodes := buildDocumentNodes(s, testTime)
 	defs := findTop(nodes, "Definitions")
 	model := findObjectType(defs, "Model")
-	// 1 mesh + 2 proxies + 2 selections = 5
+	// 1 part + 2 proxies + 2 selections = 5
 	assert.Equal(t, []any{int32(5)}, findChild(model, "Count").props)
+}
+
+func TestBuildDocumentNodesDefinitionsGeometryCountMatchesPartCount(t *testing.T) {
+	s := &meshScene{
+		parts: []meshPart{
+			{name: "object_NNN1", geomID: 1, modelID: 2},
+			{name: "object_NNN2", geomID: 3, modelID: 4},
+			{name: "object_NNN3", geomID: 5, modelID: 6},
+		},
+	}
+	nodes := buildDocumentNodes(s, testTime)
+	defs := findTop(nodes, "Definitions")
+	geom := findObjectType(defs, "Geometry")
+	require.NotNil(t, geom)
+	assert.Equal(t, []any{int32(3)}, findChild(geom, "Count").props)
 }
 
 func TestBuildDocumentNodesGeometryArrays(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{
-			id:        1,
-			vertices:  []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
-			polyIndex: []int32{0, 1, -3},
-			normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
-			uvSets:    [][]float64{{0, 0, 1, 0, 0.5, 1}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:    "object_NNN1",
+			geomID:  1,
+			modelID: 2,
+			geometry: geometryData{
+				vertices:  []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
+				polyIndex: []int32{0, 1, -3},
+				normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
+				uvSets:    [][]float64{{0, 0, 1, 0, 0.5, 1}},
+			},
+		}},
 	}
 	nodes := buildDocumentNodes(s, testTime)
 	objs := findTop(nodes, "Objects")
@@ -210,11 +224,12 @@ func TestBuildDocumentNodesGeometryArrays(t *testing.T) {
 
 func TestBuildDocumentNodesTwoUVSetsProduceTwoLayerElementsAndLayerEntries(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{
-			id:     1,
-			uvSets: [][]float64{{0, 0}, {1, 1}},
-		},
-		mesh: meshData{id: 2},
+		parts: []meshPart{{
+			name:     "object_NNN1",
+			geomID:   1,
+			modelID:  2,
+			geometry: geometryData{uvSets: [][]float64{{0, 0}, {1, 1}}},
+		}},
 	}
 	nodes := buildDocumentNodes(s, testTime)
 	geom := findChild(findTop(nodes, "Objects"), "Geometry")
@@ -240,8 +255,13 @@ func TestBuildDocumentNodesLayerElementMaterialOmittedWhenNoMaterials(t *testing
 
 func TestBuildDocumentNodesLayerElementMaterialPresentWithMaterials(t *testing.T) {
 	s := &meshScene{
-		geometry:  geometryData{id: 1, matIndex: []int32{0, 1}},
-		mesh:      meshData{id: 2},
+		parts: []meshPart{{
+			name:           "object_NNN1",
+			geomID:         1,
+			modelID:        2,
+			geometry:       geometryData{matIndex: []int32{0, 1}},
+			localMaterials: []int{0, 1},
+		}},
 		materials: []materialData{{id: 3, name: "Mat_0"}, {id: 4, name: "Mat_1"}},
 	}
 	nodes := buildDocumentNodes(s, testTime)
@@ -253,19 +273,15 @@ func TestBuildDocumentNodesLayerElementMaterialPresentWithMaterials(t *testing.T
 
 func TestBuildDocumentNodesMeshModelProperties(t *testing.T) {
 	s := &meshScene{
-		modelName: "MyModel",
-		geometry:  geometryData{id: 1},
-		mesh: meshData{
-			id:            2,
-			sourceFamily:  "ODOL",
-			sourceVersion: 7,
-			lodResolution: 1.5,
-		},
+		parts:         []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		sourceFamily:  "ODOL",
+		sourceVersion: 7,
+		lodResolution: 1.5,
 	}
 	nodes := buildDocumentNodes(s, testTime)
 	model := findChild(findTop(nodes, "Objects"), "Model")
 	require.NotNil(t, model)
-	assert.Equal(t, []any{int64(2), "Model::MyModel", "Mesh"}, model.props)
+	assert.Equal(t, []any{int64(2), "Model::object_NNN1", "Mesh"}, model.props)
 
 	props70 := findChild(model, "Properties70")
 	require.NotNil(t, props70)
@@ -276,6 +292,25 @@ func TestBuildDocumentNodesMeshModelProperties(t *testing.T) {
 
 	assert.Equal(t, []any{shadingFlag(true)}, findChild(model, "Shading").props)
 	assert.Equal(t, []any{"CullingOff"}, findChild(model, "Culling").props)
+}
+
+func TestBuildDocumentNodesMultiplePartsGetSequentialNames(t *testing.T) {
+	s := &meshScene{
+		parts: []meshPart{
+			{name: "object_NNN1", geomID: 1, modelID: 2},
+			{name: "object_NNN2", geomID: 3, modelID: 4},
+		},
+	}
+	nodes := buildDocumentNodes(s, testTime)
+	models := findChildren(findTop(nodes, "Objects"), "Model")
+	require.Len(t, models, 2)
+	assert.Equal(t, []any{int64(2), "Model::object_NNN1", "Mesh"}, models[0].props)
+	assert.Equal(t, []any{int64(4), "Model::object_NNN2", "Mesh"}, models[1].props)
+
+	geoms := findChildren(findTop(nodes, "Objects"), "Geometry")
+	require.Len(t, geoms, 2)
+	assert.Equal(t, []any{int64(1), "Geometry::object_NNN1", "Mesh"}, geoms[0].props)
+	assert.Equal(t, []any{int64(3), "Geometry::object_NNN2", "Mesh"}, geoms[1].props)
 }
 
 func findPropByName(props70 *node, name string) []any {
@@ -289,8 +324,13 @@ func findPropByName(props70 *node, name string) []any {
 
 func testMaterialScene() *meshScene {
 	return &meshScene{
-		geometry: geometryData{id: 1, matIndex: []int32{0}},
-		mesh:     meshData{id: 2},
+		parts: []meshPart{{
+			name:           "object_NNN1",
+			geomID:         1,
+			modelID:        2,
+			geometry:       geometryData{matIndex: []int32{0}},
+			localMaterials: []int{0},
+		}},
 		materials: []materialData{{
 			id:        3,
 			name:      "Mat_0",
@@ -397,8 +437,7 @@ func TestBuildDocumentNodesDefinitionsIncludesTextureAndVideoObjectTypes(t *test
 
 func TestBuildDocumentNodesProxyModelProperties(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh:     meshData{id: 2},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
 		proxies: []proxyData{{
 			id:            3,
 			name:          "Proxy_0",
@@ -423,18 +462,15 @@ func TestBuildDocumentNodesProxyModelProperties(t *testing.T) {
 
 func TestBuildDocumentNodesSelectionModelProperties(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id: 2,
-			selections: []selectionData{
-				{
-					id:            3,
-					name:          "cargo",
-					isSectional:   true,
-					vertexIndices: []uint32{0, 2},
-					vertexWeights: []byte{128, 255},
-					faceIndices:   []uint32{1, 3},
-				},
+		parts: []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{
+			{
+				id:            3,
+				name:          "cargo",
+				isSectional:   true,
+				vertexIndices: []uint32{0, 2},
+				vertexWeights: []byte{128, 255},
+				faceIndices:   []uint32{1, 3},
 			},
 		},
 	}
@@ -450,11 +486,8 @@ func TestBuildDocumentNodesSelectionModelProperties(t *testing.T) {
 
 func TestBuildDocumentNodesSelectionEmptyIndicesEmitEmptyString(t *testing.T) {
 	s := &meshScene{
-		geometry: geometryData{id: 1},
-		mesh: meshData{
-			id:         2,
-			selections: []selectionData{{id: 3, name: "empty"}},
-		},
+		parts:      []meshPart{{name: "object_NNN1", geomID: 1, modelID: 2}},
+		selections: []selectionData{{id: 3, name: "empty"}},
 	}
 	nodes := buildDocumentNodes(s, testTime)
 	sel := findChildren(findTop(nodes, "Objects"), "Model")[1]
@@ -465,8 +498,12 @@ func TestBuildDocumentNodesSelectionEmptyIndicesEmitEmptyString(t *testing.T) {
 
 func TestBuildDocumentNodesConnections(t *testing.T) {
 	s := &meshScene{
-		geometry:  geometryData{id: 1},
-		mesh:      meshData{id: 2},
+		parts: []meshPart{{
+			name:           "object_NNN1",
+			geomID:         1,
+			modelID:        2,
+			localMaterials: []int{0},
+		}},
 		materials: []materialData{{id: 3, name: "Mat_0"}},
 		proxies:   []proxyData{{id: 4, name: "Proxy_0"}},
 	}
@@ -479,10 +516,32 @@ func TestBuildDocumentNodesConnections(t *testing.T) {
 	for _, c := range conns.children {
 		got = append(got, c.props)
 	}
-	assert.Contains(t, got, []any{"OO", int64(1), int64(2)})
-	assert.Contains(t, got, []any{"OO", int64(2), int64(0)})
-	assert.Contains(t, got, []any{"OO", int64(3), int64(2)})
-	assert.Contains(t, got, []any{"OO", int64(4), int64(2)})
+	assert.Contains(t, got, []any{"OO", int64(1), int64(2)}, "geometry -> model")
+	assert.Contains(t, got, []any{"OO", int64(2), int64(0)}, "model -> root")
+	assert.Contains(t, got, []any{"OO", int64(3), int64(2)}, "material -> model")
+	assert.Contains(t, got, []any{"OO", int64(4), int64(0)}, "proxy -> root")
+}
+
+func TestBuildDocumentNodesSharedMaterialConnectsToEveryPartThatUsesIt(t *testing.T) {
+	s := &meshScene{
+		parts: []meshPart{
+			{name: "object_NNN1", geomID: 1, modelID: 2, localMaterials: []int{0}},
+			{name: "object_NNN2", geomID: 3, modelID: 4, localMaterials: []int{0}},
+		},
+		materials: []materialData{{id: 5, name: "Mat_0"}},
+	}
+	nodes := buildDocumentNodes(s, testTime)
+	conns := findTop(nodes, "Connections")
+	require.NotNil(t, conns)
+
+	var got [][]any
+	for _, c := range conns.children {
+		got = append(got, c.props)
+	}
+	// One shared material connects to both parts' Model nodes - matching
+	// the mich2001.fbx reference case (one Material, 163 Model nodes).
+	assert.Contains(t, got, []any{"OO", int64(5), int64(2)}, "material -> part 1's model")
+	assert.Contains(t, got, []any{"OO", int64(5), int64(4)}, "material -> part 2's model")
 }
 
 func TestBuildDocumentNodesDocuments(t *testing.T) {

@@ -383,16 +383,13 @@ func TestWriteBinaryWideEmptyListGetsA25ByteNullRecord(t *testing.T) {
 }
 
 func TestWriteBinaryNestedThreeLevelsRoundTrip(t *testing.T) {
+	part := &meshPart{name: "object_NNN1", geomID: 1, modelID: 2}
 	s := &meshScene{
-		modelName: "MyModel",
-		geometry:  geometryData{id: 1},
-		mesh: meshData{
-			id:            2,
-			sourceFamily:  "ODOL",
-			sourceVersion: 7,
-		},
+		parts:         []meshPart{*part},
+		sourceFamily:  "ODOL",
+		sourceVersion: 7,
 	}
-	model := buildMeshModelNode(s) // Model -> Properties70 -> P (3 levels)
+	model := buildMeshModelNode(s, part) // Model -> Properties70 -> P (3 levels)
 
 	bw := &binWriter{}
 	writeBinaryNode(bw, model)
@@ -447,24 +444,25 @@ func TestWriteBinaryFooterLayout(t *testing.T) {
 
 func TestWriteBinaryNodesFullDocumentRoundTrip(t *testing.T) {
 	s := &meshScene{
-		modelName: "MyModel",
-		geometry: geometryData{
-			id:        1,
-			vertices:  []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
-			polyIndex: []int32{0, 1, -3},
-			normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
-			uvSets:    [][]float64{{0, 0, 1, 0, 0.5, 1}},
-			matIndex:  []int32{0},
-		},
-		mesh: meshData{
-			id:            2,
-			sourceFamily:  "ODOL",
-			sourceVersion: 7,
-			lodResolution: 1.5,
-			selections:    []selectionData{{id: 5, name: "cargo", vertexIndices: []uint32{0, 2}}},
-		},
-		materials: []materialData{{id: 3, name: "Mat_0", texture: "tex.paa", mat: "Mat"}},
-		proxies:   []proxyData{{id: 4, name: "Proxy_0", path: "proxy.p3d"}},
+		parts: []meshPart{{
+			name:    "object_NNN1",
+			geomID:  1,
+			modelID: 2,
+			geometry: geometryData{
+				vertices:  []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
+				polyIndex: []int32{0, 1, -3},
+				normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
+				uvSets:    [][]float64{{0, 0, 1, 0, 0.5, 1}},
+				matIndex:  []int32{0},
+			},
+			localMaterials: []int{0},
+		}},
+		sourceFamily:  "ODOL",
+		sourceVersion: 7,
+		lodResolution: 1.5,
+		selections:    []selectionData{{id: 5, name: "cargo", vertexIndices: []uint32{0, 2}}},
+		materials:     []materialData{{id: 3, name: "Mat_0", texture: "tex.paa", mat: "Mat"}},
+		proxies:       []proxyData{{id: 4, name: "Proxy_0", path: "proxy.p3d"}},
 	}
 	fixedNow := time.Date(2026, 7, 13, 11, 30, 45, 250_000_000, time.UTC)
 	nodes := buildDocumentNodes(s, fixedNow)
@@ -494,12 +492,12 @@ func TestWriteBinaryNodesFullDocumentRoundTrip(t *testing.T) {
 	require.NotNil(t, objects)
 	geom := objects.child("Geometry")
 	require.NotNil(t, geom)
-	assert.Equal(t, []any{s.geometry.vertices}, geom.child("Vertices").props)
-	assert.Equal(t, []any{s.geometry.polyIndex}, geom.child("PolygonVertexIndex").props)
+	assert.Equal(t, []any{s.parts[0].geometry.vertices}, geom.child("Vertices").props)
+	assert.Equal(t, []any{s.parts[0].geometry.polyIndex}, geom.child("PolygonVertexIndex").props)
 
 	models := objects.childrenNamed("Model")
-	require.Len(t, models, 3) // mesh + proxy + selection
-	assert.Equal(t, []any{int64(2), "Model::MyModel", "Mesh"}, models[0].props)
+	require.Len(t, models, 3) // mesh part + proxy + selection
+	assert.Equal(t, []any{int64(2), "Model::object_NNN1", "Mesh"}, models[0].props)
 
 	// Whatever trails the top-level NULL-record is the footer.
 	require.Len(t, footer, 176)

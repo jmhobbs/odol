@@ -124,7 +124,7 @@ func buildDocumentsNode() *node {
 }
 
 func buildDefinitionsNode(s *meshScene) *node {
-	modelCount := 1 + len(s.proxies) + len(s.mesh.selections)
+	modelCount := len(s.parts) + len(s.proxies) + len(s.selections)
 	matCount := len(s.materials)
 
 	objectTypeCount := 3
@@ -136,7 +136,7 @@ func buildDefinitionsNode(s *meshScene) *node {
 		leaf("Version", int32(100)),
 		leaf("Count", int32(objectTypeCount)),
 		objectTypeNode("GlobalSettings", 1),
-		objectTypeNode("Geometry", 1),
+		objectTypeNode("Geometry", len(s.parts)),
 		objectTypeNode("Model", modelCount),
 	}
 	if matCount > 0 {
@@ -159,9 +159,10 @@ func objectTypeNode(typeName string, count int) *node {
 }
 
 func buildObjectsNode(s *meshScene) *node {
-	children := []*node{
-		buildGeometryNode(s),
-		buildMeshModelNode(s),
+	var children []*node
+	for i := range s.parts {
+		part := &s.parts[i]
+		children = append(children, buildGeometryNode(part), buildMeshModelNode(s, part))
 	}
 	for i := range s.materials {
 		mat := &s.materials[i]
@@ -170,16 +171,16 @@ func buildObjectsNode(s *meshScene) *node {
 	for i := range s.proxies {
 		children = append(children, buildProxyModelNode(&s.proxies[i]))
 	}
-	for i := range s.mesh.selections {
-		children = append(children, buildSelectionModelNode(&s.mesh.selections[i]))
+	for i := range s.selections {
+		children = append(children, buildSelectionModelNode(&s.selections[i]))
 	}
 	return &node{name: "Objects", children: children}
 }
 
-func buildGeometryNode(s *meshScene) *node {
+func buildGeometryNode(part *meshPart) *node {
 	children := []*node{
-		leaf("Vertices", s.geometry.vertices),
-		leaf("PolygonVertexIndex", s.geometry.polyIndex),
+		leaf("Vertices", part.geometry.vertices),
+		leaf("PolygonVertexIndex", part.geometry.polyIndex),
 		leaf("GeometryVersion", int32(124)),
 		{
 			name:  "LayerElementNormal",
@@ -189,12 +190,12 @@ func buildGeometryNode(s *meshScene) *node {
 				leaf("Name", ""),
 				leaf("MappingInformationType", "ByPolygonVertex"),
 				leaf("ReferenceInformationType", "Direct"),
-				leaf("Normals", s.geometry.normals),
+				leaf("Normals", part.geometry.normals),
 			},
 		},
 	}
 
-	for i, uvChannel := range s.geometry.uvSets {
+	for i, uvChannel := range part.geometry.uvSets {
 		children = append(children, &node{
 			name:  "LayerElementUV",
 			props: []any{int32(i)},
@@ -208,7 +209,7 @@ func buildGeometryNode(s *meshScene) *node {
 		})
 	}
 
-	hasMaterials := len(s.materials) > 0
+	hasMaterials := len(part.localMaterials) > 0
 	if hasMaterials {
 		children = append(children, &node{
 			name:  "LayerElementMaterial",
@@ -218,7 +219,7 @@ func buildGeometryNode(s *meshScene) *node {
 				leaf("Name", ""),
 				leaf("MappingInformationType", "ByPolygon"),
 				leaf("ReferenceInformationType", "IndexToDirect"),
-				leaf("Materials", s.geometry.matIndex),
+				leaf("Materials", part.geometry.matIndex),
 			},
 		})
 	}
@@ -230,7 +231,7 @@ func buildGeometryNode(s *meshScene) *node {
 			leaf("TypedIndex", int32(0)),
 		}},
 	}
-	for i := range s.geometry.uvSets {
+	for i := range part.geometry.uvSets {
 		layerChildren = append(layerChildren, &node{name: "LayerElement", children: []*node{
 			leaf("Type", "LayerElementUV"),
 			leaf("TypedIndex", int32(i)),
@@ -246,28 +247,28 @@ func buildGeometryNode(s *meshScene) *node {
 
 	return &node{
 		name:     "Geometry",
-		props:    []any{s.geometry.id, fmt.Sprintf("Geometry::%s", s.modelName), "Mesh"},
+		props:    []any{part.geomID, fmt.Sprintf("Geometry::%s", part.name), "Mesh"},
 		children: children,
 	}
 }
 
-func buildMeshModelNode(s *meshScene) *node {
+func buildMeshModelNode(s *meshScene, part *meshPart) *node {
 	props70 := []*node{
 		p("ScalingMax", "Vector3D", "Vector", "", int32(0), int32(0), int32(0)),
 		p("DefaultAttributeIndex", "int", "Integer", "", int32(0)),
-		p("ODOL_SourceFamily", "KString", "", "", s.mesh.sourceFamily),
-		p("ODOL_SourceVersion", "int", "Integer", "", int64(s.mesh.sourceVersion)),
-		p("ODOL_LODResolution", "double", "Number", "", float64(s.mesh.lodResolution)),
-		p("ODOL_IconColor", "int", "Integer", "", int64(s.mesh.iconColor)),
-		p("ODOL_SelectedColor", "int", "Integer", "", int64(s.mesh.selectedColor)),
+		p("ODOL_SourceFamily", "KString", "", "", s.sourceFamily),
+		p("ODOL_SourceVersion", "int", "Integer", "", int64(s.sourceVersion)),
+		p("ODOL_LODResolution", "double", "Number", "", float64(s.lodResolution)),
+		p("ODOL_IconColor", "int", "Integer", "", int64(s.iconColor)),
+		p("ODOL_SelectedColor", "int", "Integer", "", int64(s.selectedColor)),
 	}
-	for _, k := range s.mesh.odolPropertyKeys {
-		props70 = append(props70, p("ODOL_Prop_"+k, "KString", "", "", s.mesh.odolProperties[k]))
+	for _, k := range s.odolPropertyKeys {
+		props70 = append(props70, p("ODOL_Prop_"+k, "KString", "", "", s.odolProperties[k]))
 	}
 
 	return &node{
 		name:  "Model",
-		props: []any{s.mesh.id, fmt.Sprintf("Model::%s", s.modelName), "Mesh"},
+		props: []any{part.modelID, fmt.Sprintf("Model::%s", part.name), "Mesh"},
 		children: []*node{
 			leaf("Version", int32(232)),
 			{name: "Properties70", children: props70},
@@ -395,22 +396,27 @@ func buildSelectionModelNode(sel *selectionData) *node {
 }
 
 func buildConnectionsNode(s *meshScene) *node {
-	children := []*node{
-		leaf("C", "OO", s.geometry.id, s.mesh.id),
-		leaf("C", "OO", s.mesh.id, int64(0)),
+	var children []*node
+	for i := range s.parts {
+		part := &s.parts[i]
+		children = append(children, leaf("C", "OO", part.geomID, part.modelID))
+		children = append(children, leaf("C", "OO", part.modelID, int64(0)))
+		for _, globalIdx := range part.localMaterials {
+			mat := s.materials[globalIdx]
+			children = append(children, leaf("C", "OO", mat.id, part.modelID))
+		}
 	}
 	for _, mat := range s.materials {
 		children = append(children,
-			leaf("C", "OO", mat.id, s.mesh.id),
 			leaf("C", "OO", mat.videoID, mat.textureID),
 			leaf("C", "OP", mat.textureID, mat.id, "DiffuseColor"),
 		)
 	}
 	for _, proxy := range s.proxies {
-		children = append(children, leaf("C", "OO", proxy.id, s.mesh.id))
+		children = append(children, leaf("C", "OO", proxy.id, int64(0)))
 	}
-	for _, sel := range s.mesh.selections {
-		children = append(children, leaf("C", "OO", sel.id, s.mesh.id))
+	for _, sel := range s.selections {
+		children = append(children, leaf("C", "OO", sel.id, int64(0)))
 	}
 	return &node{name: "Connections", children: children}
 }
