@@ -992,7 +992,7 @@ func parseLod(data []byte, version uint32, useLZO, useCompressionFlag bool) (raw
 		return rawLod{}, fmt.Errorf("read material count: %w", err)
 	}
 	for i := uint32(0); i < materialCount; i++ {
-		mat, err := p.readMaterial()
+		mat, err := p.readMaterial(i == materialCount-1)
 		if err != nil {
 			return rawLod{}, fmt.Errorf("read material %d: %w", i, err)
 		}
@@ -1355,7 +1355,7 @@ func (p *parser) readProxy() (rawProxy, error) {
 	}, nil
 }
 
-func (p *parser) readMaterial() (rawMaterial, error) {
+func (p *parser) readMaterial(isLast bool) (rawMaterial, error) {
 	name, err := p.readString()
 	if err != nil {
 		return rawMaterial{}, err
@@ -1365,21 +1365,24 @@ func (p *parser) readMaterial() (rawMaterial, error) {
 		return rawMaterial{}, err
 	}
 	bodyStart := p.off
-	if end, ok := p.findMaterialStageDataEnd(bodyStart); ok {
+	if end, ok := p.findMaterialStageDataEnd(bodyStart, isLast); ok {
 		p.off = end
 		return rawMaterial{name: name}, nil
 	}
-	if end, ok := p.findSurfaceMaterialEnd(bodyStart); ok {
+	if end, ok := p.findSurfaceMaterialEnd(bodyStart, isLast); ok {
 		p.off = end
 		return rawMaterial{name: name}, nil
 	}
-	if end, ok := p.findNextMaterialHeader(bodyStart); ok {
-		p.off = end
-		return rawMaterial{name: name}, nil
-	}
-	if end, ok := p.findMaterialEndByEdges(bodyStart); ok {
-		p.off = end
-		return rawMaterial{name: name}, nil
+	if !isLast {
+		if end, ok := p.findNextMaterialHeader(bodyStart); ok {
+			p.off = end
+			return rawMaterial{name: name}, nil
+		}
+	} else {
+		if end, ok := p.findMaterialEndByEdges(bodyStart); ok {
+			p.off = end
+			return rawMaterial{name: name}, nil
+		}
 	}
 
 	version := materialType
@@ -1486,7 +1489,7 @@ func (p *parser) readMaterial() (rawMaterial, error) {
 	return rawMaterial{name: name}, nil
 }
 
-func (p *parser) findMaterialStageDataEnd(bodyStart int) (int, bool) {
+func (p *parser) findMaterialStageDataEnd(bodyStart int, isLast bool) (int, bool) {
 	const (
 		colorBlockSize      = 24 * 4
 		transformBlockSize  = 4 + 4*3*4
@@ -1537,10 +1540,9 @@ func (p *parser) findMaterialStageDataEnd(bodyStart int) (int, bool) {
 		if stageCount < minStageEntries || transformCount <= 0 || end > len(p.data) {
 			continue
 		}
-		if alignedEnd, ok := p.alignMaterialEndToEdges(end); ok {
-			return alignedEnd, true
+		if validEnd, ok := p.validateMaterialEnd(end, isLast); ok {
+			return validEnd, true
 		}
-		return end, true
 	}
 
 	return 0, false
@@ -1600,7 +1602,7 @@ func (p *parser) findMaterialEndByEdges(bodyStart int) (int, bool) {
 	return 0, false
 }
 
-func (p *parser) findSurfaceMaterialEnd(bodyStart int) (int, bool) {
+func (p *parser) findSurfaceMaterialEnd(bodyStart int, isLast bool) (int, bool) {
 	const transformBlockSize = 4 + 4*3*4
 
 	searchStart := bodyStart + 24*4
@@ -1662,13 +1664,54 @@ func (p *parser) findSurfaceMaterialEnd(bodyStart int) (int, bool) {
 		if end > len(p.data) {
 			continue
 		}
-		if alignedEnd, ok := p.alignMaterialEndToEdges(end); ok {
-			return alignedEnd, true
+		if validEnd, ok := p.validateMaterialEnd(end, isLast); ok {
+			return validEnd, true
 		}
-		return end, true
 	}
 
 	return 0, false
+}
+
+// validateMaterialEnd checks whether end plausibly marks the end of a
+// material entry. For the last material in the LOD, edge mlod indices
+// follow directly (checked via alignMaterialEndToEdges). For any other
+// material, another material header (an asciiz .rvmat/.bisurf name
+// followed by a small type value) follows immediately instead - it must
+// not be validated via alignMaterialEndToEdges, since a material's own
+// embedded BiSurfaceName field can coincidentally look like an edge array.
+func (p *parser) validateMaterialEnd(end int, isLast bool) (int, bool) {
+	if isLast {
+		return p.alignMaterialEndToEdges(end)
+	}
+	if p.looksLikeNextMaterialHeaderAt(end) {
+		return end, true
+	}
+	return 0, false
+}
+
+func (p *parser) looksLikeNextMaterialHeaderAt(offset int) bool {
+	if offset < 0 || offset >= len(p.data) {
+		return false
+	}
+	end := offset
+	for end < len(p.data) && p.data[end] != 0 {
+		if p.data[end] < 32 || p.data[end] > 126 {
+			return false
+		}
+		end++
+	}
+	if end >= len(p.data) || end == offset {
+		return false
+	}
+	name := string(p.data[offset:end])
+	if !strings.HasSuffix(name, ".rvmat") && !strings.HasSuffix(name, ".bisurf") {
+		return false
+	}
+	if end+5 > len(p.data) {
+		return false
+	}
+	materialType := binary.LittleEndian.Uint32(p.data[end+1:])
+	return materialType <= 64
 }
 
 func (p *parser) alignMaterialEndToEdges(materialEnd int) (int, bool) {
@@ -2660,9 +2703,19 @@ func (p *parser) readVertexIndices(count int) ([]uint32, error) {
 	return result, nil
 }
 
+// maxDecompressedSize bounds the output size accepted by readCompressedBytes.
+// Real ODOL LOD arrays are nowhere near this large; the cap exists so that a
+// garbage "count" field (encountered e.g. while heuristically probing for a
+// structure boundary) fails fast instead of allocating and decompressing
+// gigabytes of data.
+const maxDecompressedSize = 128 << 20
+
 func (p *parser) readCompressedBytes(expected int) ([]byte, error) {
 	if expected == 0 {
 		return nil, nil
+	}
+	if expected < 0 || expected > maxDecompressedSize {
+		return nil, fmt.Errorf("implausible decompressed size %d", expected)
 	}
 
 	if p.useLZO {
