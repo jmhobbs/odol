@@ -95,13 +95,18 @@ func buildGlobalSettingsNode() *node {
 					p("FrontAxisSign", "int", "Integer", "", int32(1)),
 					p("CoordAxis", "int", "Integer", "", int32(0)),
 					p("CoordAxisSign", "int", "Integer", "", int32(1)),
-					// Matches canonical DayZ FBX SDK output exactly (confirmed
-					// by inspecting samples/fbx/*.fbx, real DayZ tool exports).
-					// Those files also import "tiny" in stock Blender at this
-					// UnitScaleFactor - that's a known DayZ/Arma FBX workflow
-					// quirk (consumers set Blender's FBX import Scale to 100),
-					// not a bug: matching the canonical convention takes
-					// priority over "looks right in default Blender import".
+					// 1 means "1 raw unit = 1 cm", the standard FBX
+					// convention. Vertex positions (build.go) are scaled
+					// from ODOL/MLOD's native meters into centimeters at
+					// export time to make that true, so output is
+					// real-world-accurate with no consumer-side workaround.
+					// A deliberate departure from canonical DayZ FBX SDK
+					// output, which declares this same value while leaving
+					// vertex data in meters - see plan_fbx-realworld-scale.md
+					// (reversing the meters-for-canonical-parity decision in
+					// plan_fbx-parity.md) for why, including the empirical
+					// finding that consumers don't apply any correction
+					// based on this property's value alone.
 					p("UnitScaleFactor", "double", "Number", "", float64(1)),
 				},
 			},

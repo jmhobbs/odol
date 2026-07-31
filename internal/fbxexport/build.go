@@ -7,6 +7,16 @@ import (
 	"github.com/jmhobbs/odol/internal/model"
 )
 
+// metersToCentimeters converts ODOL/MLOD vertex positions (meters) to the
+// exported FBX's raw units. UnitScaleFactor is declared as 1 (tree.go),
+// the standard FBX convention for "1 raw unit = 1 cm" - scaling here is
+// what actually makes that true, since consumers (verified empirically
+// against three.js's FBXLoader) don't apply any correction based on
+// UnitScaleFactor itself. See plan_fbx-realworld-scale.md: this is a
+// deliberate departure from matching canonical DayZ FBX SDK output, which
+// is meter-valued despite the same UnitScaleFactor declaration.
+const metersToCentimeters = 100
+
 type materialKey struct {
 	texture  string
 	material string
@@ -127,7 +137,11 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 		li := int32(len(vertices) / 3)
 		vertexRemap[orig] = li
 		v := lod.Vertices[orig]
-		vertices = append(vertices, float64(v.X), float64(v.Y), float64(v.Z))
+		vertices = append(vertices,
+			float64(v.X)*metersToCentimeters,
+			float64(v.Y)*metersToCentimeters,
+			float64(v.Z)*metersToCentimeters,
+		)
 		return li
 	}
 

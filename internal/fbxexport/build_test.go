@@ -134,8 +134,9 @@ func TestBuildSceneStripsProxySelectionsAndTheirGeometry(t *testing.T) {
 	require.Len(t, s.parts, 1, "the proxy face's own vertices are stripped along with it")
 	// The one surviving face is [0,1,2]; reversed order visits orig 2,1,0,
 	// assigning first-seen locals 0,1,2 respectively - so the emitted
-	// vertex array is [vertex2, vertex1, vertex0].
-	assert.Equal(t, []float64{2, 0, 0, 1, 0, 0, 0, 0, 0}, s.parts[0].geometry.vertices)
+	// vertex array is [vertex2, vertex1, vertex0]. Values are x100 (meters
+	// to centimeters - see metersToCentimeters in build.go).
+	assert.Equal(t, []float64{200, 0, 0, 100, 0, 0, 0, 0, 0}, s.parts[0].geometry.vertices)
 	assert.Len(t, s.parts[0].geometry.polyIndex, 3)
 }
 
@@ -314,7 +315,7 @@ func TestBuildSceneMaterialBucketing(t *testing.T) {
 	assert.Equal(t, []int32{0, 1, 0}, s.parts[0].geometry.matIndex)
 }
 
-func TestBuildSceneVertexUpcast(t *testing.T) {
+func TestBuildSceneVertexUpcastAndScale(t *testing.T) {
 	m := triangleModel()
 	m.LODs[0].Vertices = []model.Vector3{{X: 1.5, Y: -2.5, Z: 0.125}, {}, {}}
 	s, err := buildScene(m)
@@ -324,9 +325,12 @@ func TestBuildSceneVertexUpcast(t *testing.T) {
 	require.Len(t, verts, 9)
 	// The single face [0,1,2] is read in reverse order, so vertex 0 (the
 	// interesting one) is emitted last, as the third local vertex.
-	assert.Equal(t, float64(float32(1.5)), verts[6])
-	assert.Equal(t, float64(float32(-2.5)), verts[7])
-	assert.Equal(t, float64(float32(0.125)), verts[8])
+	// ODOL/MLOD vertex positions are meters; exported FBX vertices are
+	// centimeters (see metersToCentimeters in build.go), so each component
+	// is upcast to float64 and then scaled by 100.
+	assert.Equal(t, float64(float32(1.5))*100, verts[6])
+	assert.Equal(t, float64(float32(-2.5))*100, verts[7])
+	assert.Equal(t, float64(float32(0.125))*100, verts[8])
 }
 
 func TestBuildSceneIDOrdering(t *testing.T) {
