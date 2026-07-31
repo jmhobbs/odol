@@ -3,7 +3,7 @@
 // the converted FBX. No parsing/conversion logic lives here - see
 // worker.js and cmd/wasm/main.go. No WebGL logic lives here - see
 // viewer.js.
-import { initViewer, loadModel, clearModel, setCheckerEnabled } from './viewer.js';
+import { initViewer, loadModel, clearModel, setCheckerEnabled, loadRig, clearRig } from './viewer.js';
 
 const worker = new Worker('worker.js');
 
@@ -157,6 +157,55 @@ checkerToggle.addEventListener('change', async () => {
   } catch {
     // Preview already failed and was reported by startFbxPreview - no
     // model to re-render.
+  }
+});
+
+// Reference rig FBX files are real, static FBX assets (not wasm-converted
+// output) served alongside index.html, so they're fetched directly rather
+// than routed through the worker. Each is fetched at most once and its
+// ArrayBuffer cached by key, since FBXLoader.parse only reads the buffer
+// (never detaches/mutates it) - the same reuse pattern the checker toggle
+// already relies on for the P3D preview buffer.
+const RIG_FILES = { m: 'playerRig_m.fbx', f: 'playerRig_f.fbx' };
+const rigBufferPromises = {};
+
+function getRigBuffer(key) {
+  if (!rigBufferPromises[key]) {
+    rigBufferPromises[key] = fetch(RIG_FILES[key]).then((response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${RIG_FILES[key]} (${response.status})`);
+      }
+      return response.arrayBuffer();
+    });
+  }
+  return rigBufferPromises[key];
+}
+
+// rigToken guards against a stale rig fetch (from a selection the user has
+// since changed away from) landing and overwriting a newer choice - same
+// pattern as previewToken above.
+let rigToken = 0;
+const rigSelect = document.getElementById('rig-select');
+rigSelect.addEventListener('change', async () => {
+  const token = ++rigToken;
+  const value = rigSelect.value;
+
+  if (!viewerAvailable) return;
+
+  if (value === 'none') {
+    clearRig();
+    return;
+  }
+
+  try {
+    const buffer = await getRigBuffer(value);
+    if (token !== rigToken) return;
+    loadRig(buffer);
+  } catch (err) {
+    if (token !== rigToken) return;
+    setStatus('Rig error: ' + err.message, true);
+    rigSelect.value = 'none';
+    clearRig();
   }
 });
 

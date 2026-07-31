@@ -41,6 +41,10 @@
   #viewer-controls {
     font-size: 0.85rem;
   }
+  label {
+    display: block;
+    padding: 0.25rem 0;
+  }
 </style>
 </head>
 <body>
@@ -54,13 +58,20 @@
 <p><input type="file" id="file-input" accept=".p3d"></p>
 <p>
   <button id="btn-mlod" disabled>Export MLOD + model.cfg</button>
-  <button id="btn-fbx-binary" disabled>Export FBX</button>
+  <button id="btn-fbx-binary" disabled>Export FBX (binary)</button>
 </p>
 <div id="status"></div>
 <div id="viewer-wrap">
   <canvas id="viewer"></canvas>
   <p id="viewer-controls">
     <label><input type="checkbox" id="checker-toggle" /> Checkerboard Texture</label>
+    <label>Reference Rig:
+      <select id="rig-select">
+        <option value="none" selected>None</option>
+        <option value="m">Male</option>
+        <option value="f">Female</option>
+      </select>
+    </label>
   </p>
   <p id="viewer-caption">
     Preview of the converted FBX geometry. Drag to rotate, scroll to zoom.
