@@ -145,16 +145,22 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 		return li
 	}
 
-	// See the winding-order comment in the pre-split version of this
-	// function (git history) for why vertices/normals/UVs are emitted in
-	// reverse per-face order - unchanged by the per-part split, just scoped
-	// to this component's own faces.
+	// ODOL/MLOD winding is CW from outside; FBX expects CCW. Fix the winding
+	// up to match using the exact permutation docs/P3D Lod Faces.txt's
+	// "Polygon Vertex Order" table documents (1st,4th,3rd,2nd for a quad;
+	// 1st,3rd,2nd for a triangle) - NOT a full reversal. See fixWinding in
+	// internal/fbximport/import.go (the inverse direction) for why this
+	// distinction matters: for a quad, MLOD stores it unsplit and the
+	// engine fan-triangulates from vertex 0, so whichever source vertex
+	// ends up in slot 0 picks the diagonal. windingFixedSourceIndex is a
+	// self-inverse permutation, so applying it here and again on import
+	// composes back to the identity, same as the old full-reversal did.
 	for _, faceIdx := range group.faceIndices {
 		face := lod.Faces[faceIdx]
 		n := len(face.Indices)
 
 		for slot := 0; slot < n; slot++ {
-			localIdx := localVertexIndex(face.Indices[n-1-slot])
+			localIdx := localVertexIndex(face.Indices[windingFixedSourceIndex(slot, n)])
 			if slot == n-1 {
 				polyIndex = append(polyIndex, -localIdx-1)
 			} else {
@@ -163,7 +169,7 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 		}
 
 		for slot := 0; slot < n; slot++ {
-			srcI := n - 1 - slot
+			srcI := windingFixedSourceIndex(slot, n)
 			normalIdx := uint32(0)
 			if srcI < len(face.NormalIndices) {
 				normalIdx = face.NormalIndices[srcI]
@@ -177,7 +183,7 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 		}
 
 		for slot := 0; slot < n; slot++ {
-			srcI := n - 1 - slot
+			srcI := windingFixedSourceIndex(slot, n)
 			var uv model.UV
 			if srcI < len(face.UVs) {
 				uv = face.UVs[srcI]
@@ -194,7 +200,7 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 			face := lod.Faces[faceIdx]
 			n := len(face.Indices)
 			for slot := 0; slot < n; slot++ {
-				vi := face.Indices[n-1-slot]
+				vi := face.Indices[windingFixedSourceIndex(slot, n)]
 				var uv model.UV
 				if int(vi) < len(uvSet) {
 					uv = uvSet[vi]
@@ -233,6 +239,20 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 		},
 		localMaterials: localMaterials,
 	}
+}
+
+// windingFixedSourceIndex maps an output slot to the source descriptor index
+// it should read from, applying docs/P3D Lod Faces.txt's documented
+// "Polygon Vertex Order" permutation (1st,4th,3rd,2nd for a quad;
+// 1st,3rd,2nd for a triangle): slot 0 keeps the source's first descriptor,
+// every other slot reads back-to-front. This is an involution (applying it
+// twice returns the original index), which is what lets
+// internal/fbximport.fixWinding use the identical formula to undo it.
+func windingFixedSourceIndex(slot, n int) int {
+	if slot == 0 {
+		return 0
+	}
+	return n - slot
 }
 
 // filteredProperties returns the LOD property map and an ordered key slice,

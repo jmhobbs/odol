@@ -40,14 +40,16 @@ func TestBuildScenePolyIndex(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1, "all three faces share vertices, so they form a single connected component")
-	// Face vertices are emitted in reverse per-face order (ODOL/MLOD winding
-	// is CCW from outside; FBX expects CW) - see the comment in build.go.
-	// Vertex indices are also remapped to each part's own local, 0-based
-	// space in order of first appearance:
-	//   triangle [0,1,2] reversed -> orig 2,1,0 -> first-seen locals 0,1,2 -> emitted 0, 1, -(2+1)=-3
-	//   quad [0,1,2,3] reversed -> orig 3,2,1,0 -> orig 3 is new (local 3); 2,1,0 already seen (locals 0,1,2) -> emitted 3, 0, 1, -(2+1)=-3
-	//   edge [5,0] reversed -> orig 0,5 -> orig 0 already seen (local 2); orig 5 is new (local 4) -> emitted 2, -(4+1)=-5
-	assert.Equal(t, []int32{0, 1, -3, 3, 0, 1, -3, 2, -5}, s.parts[0].geometry.polyIndex)
+	// Face vertices are reordered per docs/P3D Lod Faces.txt's documented
+	// permutation (ODOL/MLOD winding is CW from outside; FBX expects CCW) -
+	// see windingFixedSourceIndex in build.go: slot 0 keeps the source's
+	// first descriptor, every other slot reads back-to-front. Vertex
+	// indices are also remapped to each part's own local, 0-based space in
+	// order of first appearance:
+	//   triangle [0,1,2] -> read order orig 0,2,1 -> first-seen locals 0,1,2 -> emitted 0, 1, -(2+1)=-3
+	//   quad [0,1,2,3] -> read order orig 0,3,2,1 -> orig 0 already seen (local 0); orig 3 is new (local 3); orig 2 already seen (local 1); orig 1 already seen (local 2) -> emitted 0, 3, 1, -(2+1)=-3
+	//   edge [5,0] -> read order orig 5,0 -> orig 5 is new (local 4); orig 0 already seen (local 0) -> emitted 4, -(0+1)=-1
+	assert.Equal(t, []int32{0, 1, -3, 0, 3, 1, -3, 4, -1}, s.parts[0].geometry.polyIndex)
 }
 
 func TestBuildSceneNormalsViaIndices(t *testing.T) {
@@ -69,10 +71,11 @@ func TestBuildSceneNormalsViaIndices(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
-	// Face slots are reversed (see TestBuildScenePolyIndex), so
-	// NormalIndices [2,0,1] is read back-to-front: normals[1], normals[0], normals[2].
+	// Face slots are reordered per windingFixedSourceIndex (see
+	// TestBuildScenePolyIndex), so NormalIndices [2,0,1] is read in the
+	// order index 0, then 2, then 1: normals[2], normals[1], normals[0].
 	// Z is negated (see TestBuildSceneNormalZIsNegated).
-	want := []float64{0, 1, 0, 1, 0, 0, 0, 0, -1}
+	want := []float64{0, 0, -1, 0, 1, 0, 1, 0, 0}
 	assert.Equal(t, want, s.parts[0].geometry.normals)
 }
 
@@ -132,11 +135,11 @@ func TestBuildSceneStripsProxySelectionsAndTheirGeometry(t *testing.T) {
 	require.Len(t, s.selections, 1)
 	assert.Equal(t, "cargo", s.selections[0].name)
 	require.Len(t, s.parts, 1, "the proxy face's own vertices are stripped along with it")
-	// The one surviving face is [0,1,2]; reversed order visits orig 2,1,0,
-	// assigning first-seen locals 0,1,2 respectively - so the emitted
-	// vertex array is [vertex2, vertex1, vertex0]. Values are x100 (meters
-	// to centimeters - see metersToCentimeters in build.go).
-	assert.Equal(t, []float64{200, 0, 0, 100, 0, 0, 0, 0, 0}, s.parts[0].geometry.vertices)
+	// The one surviving face is [0,1,2]; windingFixedSourceIndex visits
+	// orig 0,2,1, assigning first-seen locals 0,1,2 respectively - so the
+	// emitted vertex array is [vertex0, vertex2, vertex1]. Values are x100
+	// (meters to centimeters - see metersToCentimeters in build.go).
+	assert.Equal(t, []float64{0, 0, 0, 200, 0, 0, 100, 0, 0}, s.parts[0].geometry.vertices)
 	assert.Len(t, s.parts[0].geometry.polyIndex, 3)
 }
 
@@ -155,7 +158,7 @@ func TestBuildSceneNormalIndexOutOfRange(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
 	// index 99 is out of range -> zero vector
-	assert.Equal(t, []float64{1, 0, 0, 0, 0, 0, 1, 0, 0}, s.parts[0].geometry.normals)
+	assert.Equal(t, []float64{1, 0, 0, 1, 0, 0, 0, 0, 0}, s.parts[0].geometry.normals)
 }
 
 func TestBuildSceneNormalsMissingIndices(t *testing.T) {
@@ -197,12 +200,12 @@ func TestBuildSceneUVs(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
-	// Face slots are reversed (see TestBuildScenePolyIndex), so UVs are
-	// read back-to-front.
+	// Face slots are reordered per windingFixedSourceIndex (see
+	// TestBuildScenePolyIndex): index 0, then 2, then 1.
 	want := []float64{
+		float64(float32(0.1)), float64(float32(0.2)),
 		float64(float32(0.5)), float64(float32(0.6)),
 		float64(float32(0.3)), float64(float32(0.4)),
-		float64(float32(0.1)), float64(float32(0.2)),
 	}
 	assert.Equal(t, want, s.parts[0].geometry.uvSets[0])
 }
@@ -254,15 +257,16 @@ func TestBuildSceneAdditionalUVSetIndexedByFaceIndices(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
-	// Face slots are reversed (see TestBuildScenePolyIndex): reading
-	// face.Indices = [2,0,1] back-to-front gives 1, 0, 2 →
-	// uvSets[1][1], uvSets[1][0], uvSets[1][2]
+	// Face slots are reordered per windingFixedSourceIndex (see
+	// TestBuildScenePolyIndex): reading face.Indices = [2,0,1] in order
+	// index 0, then 2, then 1 gives 2, 1, 0 →
+	// uvSets[1][2], uvSets[1][1], uvSets[1][0]
 	// (this additional UV set is looked up by original vertex index, not
 	// the part's remapped local index - see the setIdx loop in buildPart)
 	want := []float64{
+		float64(float32(0.5)), float64(float32(0.6)),
 		float64(float32(0.3)), float64(float32(0.4)),
 		float64(float32(0.1)), float64(float32(0.2)),
-		float64(float32(0.5)), float64(float32(0.6)),
 	}
 	assert.Equal(t, want, s.parts[0].geometry.uvSets[1])
 }
@@ -277,10 +281,15 @@ func TestBuildSceneAdditionalUVIndexOutOfRangeFallsToZero(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
-	// Face slots are reversed, so vertex 2 (originally last) is read
-	// first: slot 0 → uvSet index 2 → out of range → {0, 0}
-	assert.Equal(t, float64(0), s.parts[0].geometry.uvSets[1][0])
-	assert.Equal(t, float64(0), s.parts[0].geometry.uvSets[1][1])
+	// Face slots are reordered per windingFixedSourceIndex, so slot 1 reads
+	// vertex 2 (uvSet index 2, out of range -> {0,0}); slots 0 and 2 read
+	// vertices 0 and 1, both in range.
+	want := []float64{
+		float64(float32(0.1)), float64(float32(0.2)),
+		0, 0,
+		float64(float32(0.3)), float64(float32(0.4)),
+	}
+	assert.Equal(t, want, s.parts[0].geometry.uvSets[1])
 }
 
 func TestBuildSceneUVSetsOnlyPrimaryEmitsOneSet(t *testing.T) {
@@ -323,14 +332,15 @@ func TestBuildSceneVertexUpcastAndScale(t *testing.T) {
 	require.Len(t, s.parts, 1)
 	verts := s.parts[0].geometry.vertices
 	require.Len(t, verts, 9)
-	// The single face [0,1,2] is read in reverse order, so vertex 0 (the
-	// interesting one) is emitted last, as the third local vertex.
-	// ODOL/MLOD vertex positions are meters; exported FBX vertices are
-	// centimeters (see metersToCentimeters in build.go), so each component
-	// is upcast to float64 and then scaled by 100.
-	assert.Equal(t, float64(float32(1.5))*100, verts[6])
-	assert.Equal(t, float64(float32(-2.5))*100, verts[7])
-	assert.Equal(t, float64(float32(0.125))*100, verts[8])
+	// The single face [0,1,2] reads slot 0 from source index 0 (see
+	// windingFixedSourceIndex), so vertex 0 (the interesting one) is
+	// emitted first, as the first local vertex. ODOL/MLOD vertex positions
+	// are meters; exported FBX vertices are centimeters (see
+	// metersToCentimeters in build.go), so each component is upcast to
+	// float64 and then scaled by 100.
+	assert.Equal(t, float64(float32(1.5))*100, verts[0])
+	assert.Equal(t, float64(float32(-2.5))*100, verts[1])
+	assert.Equal(t, float64(float32(0.125))*100, verts[2])
 }
 
 func TestBuildSceneIDOrdering(t *testing.T) {
