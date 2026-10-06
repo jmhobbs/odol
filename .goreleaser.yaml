@@ -21,6 +21,19 @@ builds:
       - arm64
       - amd64
       - "386"
+  - main: ./cmd/p3dinspect/
+    id: p3dinspect
+    binary: p3dinspect
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+      - "386"
 
 archives:
   - formats: [tar.gz]
