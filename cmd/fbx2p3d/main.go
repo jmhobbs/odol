@@ -1,7 +1,8 @@
 // Command fbx2p3d builds an MLOD P3D from one binary FBX file per
 // graphical resolution LOD, adding a "camoground" named selection and the
-// given texture/material to each, plus Geometry, View Geometry, Fire
-// Geometry, and Memory LODs. See plan_fbx2p3d.md for design rationale.
+// given texture/material (empty when not given) to each, plus Geometry,
+// View Geometry, Fire Geometry, and Memory LODs. See plan_fbx2p3d.md for
+// design rationale.
 package main
 
 import (
@@ -14,17 +15,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jmhobbs/odol/internal/fbximport"
+	"github.com/jmhobbs/odol/internal/fbx2p3d"
 	"github.com/jmhobbs/odol/internal/mlod"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
-	"github.com/jmhobbs/odol/internal/model"
 )
 
 func main() {
 	var lods lodFlagList
 	flag.Var(&lods, "lod", "graphical LOD as <resolution>=<path.fbx>; repeatable, at least one required")
-	texture := flag.String("texture", "", "texture .paa path applied to every graphical LOD (required)")
-	material := flag.String("material", "", "material .rvmat path applied to every graphical LOD (required)")
+	texture := flag.String("texture", "", "texture .paa path applied to every graphical LOD (default: none)")
+	material := flag.String("material", "", "material .rvmat path applied to every graphical LOD (default: none)")
+	fireMaterial := flag.String("fire-material", "", "vanilla penetration material applied to the Fire Geometry LOD, by name (e.g. wood, metalplate) or full DZ\\data\\data\\penetration path; valid names are listed below")
 	mass := flag.Float64("mass", 1.0, "total Geometry LOD mass in kg, split evenly across its 8 points")
 	scale := flag.Float64("scale", 1.0, "uniform correction factor applied to every imported LOD's vertex positions, to fix a real-world unit mismatch from the source FBX")
 	output := flag.String("o", "", "output P3D path (default: derived from the lowest-resolution --lod file)")
@@ -32,8 +33,10 @@ func main() {
 	flag.BoolVar(&yes, "y", false, "skip the size-preview confirmation prompt (also auto-skipped when stdin is not a terminal)")
 	flag.BoolVar(&yes, "yes", false, "long form of -y")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s --lod <resolution>=<path.fbx> [--lod ...] --texture <path.paa> --material <path.rvmat> [--scale <factor>] [-y] [-o output.p3d]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s --lod <resolution>=<path.fbx> [--lod ...] [--texture <path.paa>] [--material <path.rvmat>] [--fire-material <name>] [--scale <factor>] [-y] [-o output.p3d]\n", os.Args[0])
 		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "\nvalid --fire-material names:")
+		fmt.Fprint(os.Stderr, wrapList(mlodbuild.PenetrationMaterialNames(), "  ", 80))
 	}
 	flag.Parse()
 
@@ -42,21 +45,26 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if *texture == "" || *material == "" {
-		fmt.Fprintln(os.Stderr, "error: --texture and --material are required")
+	if err := fbx2p3d.ValidateScale(*scale); err != nil {
+		fmt.Fprintf(os.Stderr, "error: --%v\n", err)
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := validateScale(*scale); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		flag.Usage()
-		os.Exit(2)
+	var fireMaterialPath string
+	if *fireMaterial != "" {
+		var err error
+		fireMaterialPath, err = mlodbuild.PenetrationMaterialPath(*fireMaterial)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: --fire-material:", err)
+			os.Exit(2)
+		}
 	}
 
 	opts := mlodbuild.Options{
-		Texture:  *texture,
-		Material: *material,
-		Mass:     float32(*mass),
+		Texture:              *texture,
+		Material:             *material,
+		FireGeometryMaterial: fireMaterialPath,
+		Mass:                 float32(*mass),
 	}
 	outPath := outputPath(lods, *output)
 
@@ -73,24 +81,29 @@ func main() {
 	}
 }
 
-// validateScale rejects scale factors that can't produce sensible geometry:
-// zero collapses every vertex to a single point, and negative values invert
-// winding/normals in ways nothing downstream handles.
-func validateScale(scale float64) error {
-	if scale <= 0 {
-		return fmt.Errorf("--scale must be greater than 0, got %g", scale)
+// wrapList joins items with ", " into newline-terminated lines that start
+// with indent and stay within maxWidth. An item too long to fit gets a line
+// of its own rather than being split.
+func wrapList(items []string, indent string, maxWidth int) string {
+	var out strings.Builder
+	line := indent
+	for i, item := range items {
+		if i < len(items)-1 {
+			item += ","
+		}
+		if line != indent && len(line)+1+len(item) > maxWidth {
+			out.WriteString(line + "\n")
+			line = indent
+		}
+		if line != indent {
+			line += " "
+		}
+		line += item
 	}
-	return nil
-}
-
-// scaleVertices returns a new slice with every vertex multiplied by factor.
-// It does not mutate vertices.
-func scaleVertices(vertices []model.Vector3, factor float32) []model.Vector3 {
-	out := make([]model.Vector3, len(vertices))
-	for i, v := range vertices {
-		out[i] = model.Vector3{X: v.X * factor, Y: v.Y * factor, Z: v.Z * factor}
+	if line != indent {
+		out.WriteString(line + "\n")
 	}
-	return out
+	return out.String()
 }
 
 // lodEntry is one parsed --lod flag value.
@@ -159,38 +172,21 @@ func outputPath(lods []lodEntry, explicit string) string {
 func run(lods []lodEntry, opts mlodbuild.Options, scale float32, outPath string, logOutput io.Writer, confirm confirmFunc) error {
 	logger := stepLogger{w: logOutput}
 
-	var graphical []mlodbuild.GraphicalLOD
+	sources := make([]fbx2p3d.LODSource, len(lods))
 	for i, e := range lods {
-		logger.logf("importing LOD %g from %s", e.Resolution, e.Path)
-		data, err := os.ReadFile(e.Path)
-		if err != nil {
-			return err
-		}
-		mesh, err := fbximport.Import(data)
-		if err != nil {
-			return fmt.Errorf("%s: %w", e.Path, err)
-		}
-		if mesh.BestEffortPolygons > 0 {
-			logger.logf("warning: %s has %d self-intersecting or zero-area polygon(s), imported best-effort (triangles may be flipped or overlap). Fix them in the source model.", e.Path, mesh.BestEffortPolygons)
-		}
-		scaledVertices := scaleVertices(mesh.Vertices, scale)
-
-		if i == 0 && confirm != nil {
-			if err := confirm(e.Path, boundingBoxSize(scaledVertices)); err != nil {
-				return err
-			}
-		}
-
-		graphical = append(graphical, mlodbuild.GraphicalLOD{
+		sources[i] = fbx2p3d.LODSource{
 			Resolution: e.Resolution,
-			Vertices:   scaledVertices,
-			Normals:    mesh.Normals,
-			Faces:      mesh.Faces,
-		})
+			Name:       e.Path,
+			Load:       func() ([]byte, error) { return os.ReadFile(e.Path) },
+		}
+	}
+	hooks := fbx2p3d.Hooks{
+		Logf:          logger.logf,
+		Warnf:         func(format string, args ...any) { logger.logf("warning: "+format, args...) },
+		AfterFirstLOD: confirm,
 	}
 
-	logger.logf("building auxiliary LODs (Geometry, View Geometry, Fire Geometry, Memory)")
-	m, err := mlodbuild.Build(graphical, opts)
+	m, err := fbx2p3d.Build(sources, opts, scale, hooks)
 	if err != nil {
 		return err
 	}

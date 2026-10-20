@@ -2,8 +2,6 @@ package fbximport
 
 import (
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -283,7 +281,9 @@ func TestDecodeGeometryQuadWindingMatchesDocumentedPermutation(t *testing.T) {
 	face := faces[0]
 
 	assert.Equal(t, []uint32{0, 3, 2, 1}, face.Indices, "1st,4th,3rd,2nd")
-	assert.Equal(t, []model.UV{{U: 0, V: 0}, {U: 0, V: 1}, {U: 1, V: 1}, {U: 1, V: 0}}, face.UVs)
+	// The FBX UVs (0,0),(1,0),(1,1),(0,1) become P3D (0,1),(1,1),(1,0),(0,0)
+	// after the V flip, then take the same 1st,4th,3rd,2nd order.
+	assert.Equal(t, []model.UV{{U: 0, V: 1}, {U: 0, V: 0}, {U: 1, V: 0}, {U: 1, V: 1}}, face.UVs)
 }
 
 // TestDecodeGeometryTriangleWindingMatchesDocumentedPermutation is the
@@ -299,7 +299,55 @@ func TestDecodeGeometryTriangleWindingMatchesDocumentedPermutation(t *testing.T)
 	face := faces[0]
 
 	assert.Equal(t, []uint32{0, 2, 1}, face.Indices, "1st,3rd,2nd")
-	assert.Equal(t, []model.UV{{U: 0, V: 0}, {U: 0, V: 1}, {U: 1, V: 0}}, face.UVs)
+	// The FBX UVs (0,0),(1,0),(0,1) become P3D (0,1),(1,1),(0,0) after the
+	// V flip, then take the same 1st,3rd,2nd order.
+	assert.Equal(t, []model.UV{{U: 0, V: 1}, {U: 0, V: 0}, {U: 1, V: 1}}, face.UVs)
+}
+
+// TestDecodeGeometryFlipsV checks that FBX UVs (V = 0 at the bottom of the
+// texture) are converted to P3D UVs (V = 0 at the top) as 1 - V.
+func TestDecodeGeometryFlipsV(t *testing.T) {
+	corners := []model.Vector3{{X: 0, Y: 0, Z: 0}, {X: 1, Y: 0, Z: 0}, {X: 0, Y: 1, Z: 0}}
+	fbxUVs := []model.UV{{U: 0.25, V: 0.1}, {U: 0.25, V: 0.1}, {U: 0.25, V: 0.1}}
+	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, fbxUVs))
+	require.NoError(t, err)
+	require.Len(t, geometry.faces, 1)
+
+	for _, uv := range geometry.faces[0].UVs {
+		assert.Equal(t, float32(0.25), uv.U)
+		assert.Equal(t, float32(1-float64(float32(0.1))), uv.V)
+	}
+}
+
+// TestImportRoundTripKeepsUVsExact checks that the export-side and
+// import-side V flips cancel bit for bit, so P3D -> FBX -> P3D does not
+// drift UVs.
+func TestImportRoundTripKeepsUVsExact(t *testing.T) {
+	want := singleTriangleModel()
+	want.LODs[0].Faces[0].UVs = []model.UV{
+		{U: 0.123456, V: 0.987654},
+		{U: 0.5, V: 0.0057190657},
+		{U: 0.99340814, V: 0.333333},
+	}
+	data, err := fbxexport.Marshal(want)
+	require.NoError(t, err)
+
+	mesh, err := Import(data)
+	require.NoError(t, err)
+	require.Len(t, mesh.Faces, 1)
+
+	wantLOD := want.LODs[0]
+	wantUVByPosition := map[[3]float32]model.UV{}
+	for i, idx := range wantLOD.Faces[0].Indices {
+		wantUVByPosition[roundKey(wantLOD.Vertices[idx])] = wantLOD.Faces[0].UVs[i]
+	}
+	face := mesh.Faces[0]
+	require.Len(t, face.UVs, 3)
+	for i, idx := range face.Indices {
+		wantUV, ok := wantUVByPosition[roundKey(mesh.Vertices[idx])]
+		require.True(t, ok)
+		assert.Equal(t, wantUV, face.UVs[i])
+	}
 }
 
 // TestDecodeGeometryFanTriangulatesLargerPolygons checks that a polygon with
@@ -402,6 +450,13 @@ func uvForCorner(corner uint32) model.UV {
 	return model.UV{U: float32(corner), V: float32(corner) + 0.5}
 }
 
+// importedUVForCorner is uvForCorner after decodeGeometry converts it from
+// FBX V (0 at the bottom) to P3D V (0 at the top).
+func importedUVForCorner(corner uint32) model.UV {
+	fbxUV := uvForCorner(corner)
+	return model.UV{U: fbxUV.U, V: float32(1 - float64(fbxUV.V))}
+}
+
 func distinctCornerUVs(count int) []model.UV {
 	uvs := make([]model.UV, count)
 	for i := range uvs {
@@ -428,7 +483,7 @@ func TestDecodeGeometryTriangulatesConcavePolygon(t *testing.T) {
 		require.Len(t, f.UVs, 3)
 		for i, vertex := range f.Indices {
 			assert.Equal(t, vertex, f.NormalIndices[i], "normal must follow its corner")
-			assert.Equal(t, uvForCorner(vertex), f.UVs[i], "UV must follow its corner")
+			assert.Equal(t, importedUVForCorner(vertex), f.UVs[i], "UV must follow its corner")
 		}
 
 		// fixWinding turns FBX's CCW-front triangles into MLOD's CW-front
@@ -455,7 +510,7 @@ func TestDecodeGeometrySplitsQuadThatFoldsOnEngineDiagonal(t *testing.T) {
 	for _, f := range geometry.faces {
 		for i, vertex := range f.Indices {
 			assert.Equal(t, vertex, f.NormalIndices[i])
-			assert.Equal(t, uvForCorner(vertex), f.UVs[i])
+			assert.Equal(t, importedUVForCorner(vertex), f.UVs[i])
 		}
 	}
 	assert.Zero(t, geometry.bestEffortPolygons)
@@ -503,21 +558,4 @@ func TestDecodeEulerTransformAppliesRotationTranslationScale(t *testing.T) {
 	got := xf.applyPoint(model.Vector3{X: 1, Y: 0, Z: 0})
 	// scale X by 2 -> (2,0,0); rotate 90 deg about Z -> (0,2,0); translate +5 X -> (5,2,0)
 	approxVec3(t, model.Vector3{X: 5, Y: 2, Z: 0}, got, 1e-4, "rotated+scaled+translated point")
-}
-
-func TestImportSampleFile(t *testing.T) {
-	path := filepath.Join("..", "..", "samples", "fbx", "sodacan.fbx")
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-
-	mesh, err := Import(data)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, mesh.Vertices)
-	assert.NotEmpty(t, mesh.Faces)
-	for _, f := range mesh.Faces {
-		assert.Containsf(t, []int{3, 4}, len(f.Indices), "face has unsupported vertex count %d", len(f.Indices))
-		assert.Len(t, f.NormalIndices, len(f.Indices))
-		assert.Len(t, f.UVs, len(f.Indices))
-	}
 }

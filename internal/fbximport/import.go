@@ -490,7 +490,15 @@ func (l *vec2Layer) at(occurrence int) (model.UV, error) {
 	if i*2+1 >= len(l.direct) || i < 0 {
 		return model.UV{}, fmt.Errorf("direct index %d out of range (%d values)", i, len(l.direct))
 	}
-	return model.UV{U: float32(l.direct[i*2]), V: float32(l.direct[i*2+1])}, nil
+	return model.UV{U: float32(l.direct[i*2]), V: p3dV(l.direct[i*2+1])}, nil
+}
+
+// p3dV converts an FBX V coordinate (0 at the bottom of the texture) to a
+// P3D V coordinate (0 at the top), inverting internal/fbxexport's fbxV. The
+// flip is done in float64 before narrowing so an exported P3D V comes back
+// bit for bit.
+func p3dV(fbxV float64) float32 {
+	return float32(1 - fbxV)
 }
 
 func childString(n *fbxbinary.Node, name string) (string, error) {

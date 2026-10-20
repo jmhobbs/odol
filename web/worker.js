@@ -12,7 +12,7 @@ const go = new Go();
 WebAssembly.instantiateStreaming(fetch('public/odol.wasm'), go.importObject)
   .then((result) => {
     // go.run() executes main() synchronously up to the point where it
-    // parks (our main() registers the odolConvertTo* globals, then blocks
+    // parks (our main() registers the odol* globals, then blocks
     // forever on `select {}` to keep the instance alive) - by the time
     // this call returns, the globals are already registered and safe to
     // call. It's still awaited (via .catch below) purely to surface an
@@ -41,6 +41,16 @@ onmessage = (event) => {
 
 function handleConvert(msg) {
   const { id, action, name, data, ascii } = msg;
+
+  if (action === 'penetrationMaterials') {
+    postMessage({ id, ok: true, names: odolPenetrationMaterials() });
+    return;
+  }
+  if (action === 'fbx2p3d') {
+    handleFBXToP3D(id, msg.request);
+    return;
+  }
+
   let result;
   try {
     if (action === 'mlod') {
@@ -74,5 +84,41 @@ function handleConvert(msg) {
   postMessage(
     { id, ok: true, filename: result.filename, data: result.data.buffer },
     [result.data.buffer]
+  );
+}
+
+// request is {lods: [{resolution, name, data: ArrayBuffer}], texture,
+// material, fireMaterial, mass, scale} - see fbxToP3D in cmd/wasm/main.go. The P3D bytes and every LOD's positions/triangles
+// typed arrays are fresh, exactly-sized buffers from the Go bridge, so
+// all of them are transferred rather than copied.
+function handleFBXToP3D(id, request) {
+  let result;
+  try {
+    result = odolFBXToP3D({
+      ...request,
+      lods: request.lods.map((lod) => ({ ...lod, data: new Uint8Array(lod.data) })),
+    });
+  } catch (err) {
+    result = { ok: false, error: String(err) };
+  }
+
+  if (!result.ok) {
+    postMessage({ id, ok: false, error: result.error });
+    return;
+  }
+
+  const transfer = [result.data.buffer];
+  for (const lod of result.preview.lods) {
+    transfer.push(lod.positions.buffer, lod.triangles.buffer);
+  }
+  postMessage(
+    {
+      id,
+      ok: true,
+      data: result.data.buffer,
+      preview: result.preview,
+      warnings: result.warnings,
+    },
+    transfer
   );
 }

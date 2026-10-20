@@ -30,6 +30,7 @@ type LODSummary struct {
 	Partial        bool    `json:"partial"`
 	VertexCount    int     `json:"vertexCount"`
 	FaceCount      int     `json:"faceCount"`
+	TriangleCount  int     `json:"triangleCount"`
 	UVSetCount     int     `json:"uvSetCount"`
 	// BoundingSize is the (width, height, depth) extent, in meters, of this
 	// LOD's vertices - the same bounding box cmd/fbx2mlod's conversion
@@ -122,7 +123,10 @@ func Summarize(m *model.Model, format detector.P3DFormat) Summary {
 func summarizeLOD(index int, lod model.LOD) LODSummary {
 	textures := map[string]struct{}{}
 	materials := map[string]struct{}{}
+	triangles := 0
 	for _, face := range lod.Faces {
+		// MLOD faces are triangles or quads; a quad renders as 2 triangles.
+		triangles += max(len(face.Indices)-2, 0)
 		if face.Texture != "" {
 			textures[face.Texture] = struct{}{}
 		}
@@ -164,6 +168,7 @@ func summarizeLOD(index int, lod model.LOD) LODSummary {
 		Partial:        partial,
 		VertexCount:    len(lod.Vertices),
 		FaceCount:      len(lod.Faces),
+		TriangleCount:  triangles,
 		UVSetCount:     len(lod.UVSets),
 		BoundingSize:   boundingSizeValue,
 		Textures:       sortedKeys(textures),

@@ -161,6 +161,87 @@ func TestStripProxySelectionsRemapsUVSetsAndPointMasses(t *testing.T) {
 	assert.Equal(t, []float32{1, 2, 3}, got.PointMasses)
 }
 
+func TestStripProxySelectionsRemovesOrphanProxyTriangle(t *testing.T) {
+	// Mirrors scarh.p3d faces 0-3: an untextured proxy triangle (right
+	// angle, legs 0.1 and 0.2) that no named selection references, left
+	// behind after its proxy was deleted.
+	lod := model.LOD{
+		Vertices: []model.Vector3{
+			{X: 0.3, Y: 0.1, Z: 0.1}, {X: 0.3, Y: 0.1, Z: 0}, {X: 0.5, Y: 0.1, Z: 0}, // orphan proxy triangle
+			{X: 0}, {X: 1}, {Y: 1}, // real triangle
+		},
+		Faces: []model.Face{
+			{Indices: []uint32{0, 1, 2}},
+			{Indices: []uint32{3, 4, 5}, Texture: "a_co.paa"},
+		},
+		Selections: []model.Selection{
+			{Name: "camo", VertexIndices: []uint32{3, 4, 5}, FaceIndices: []uint32{1}},
+		},
+	}
+
+	got := stripProxySelections(lod)
+
+	assert.Equal(t, []model.Vector3{{X: 0}, {X: 1}, {Y: 1}}, got.Vertices)
+	assert.Equal(t, []model.Face{{Indices: []uint32{0, 1, 2}, Texture: "a_co.paa"}}, got.Faces)
+	assert.Equal(t, []model.Selection{
+		{Name: "camo", VertexIndices: []uint32{0, 1, 2}, FaceIndices: []uint32{0}},
+	}, got.Selections)
+}
+
+func TestStripProxySelectionsKeepsProxyShapedFaceInSelection(t *testing.T) {
+	// Real geometry can have the proxy shape too (character_male.p3d has
+	// two such head triangles), but it belongs to named selections.
+	lod := model.LOD{
+		Vertices: []model.Vector3{{X: 0.3, Y: 0.1, Z: 0.1}, {X: 0.3, Y: 0.1, Z: 0}, {X: 0.5, Y: 0.1, Z: 0}},
+		Faces: []model.Face{
+			{Indices: []uint32{0, 1, 2}},
+		},
+		Selections: []model.Selection{
+			{Name: "head", FaceIndices: []uint32{0}},
+		},
+	}
+
+	got := stripProxySelections(lod)
+
+	assert.Equal(t, lod, got)
+}
+
+func TestStripProxySelectionsKeepsTexturedProxyShapedFace(t *testing.T) {
+	lod := model.LOD{
+		Vertices: []model.Vector3{
+			{X: 0.3, Y: 0.1, Z: 0.1}, {X: 0.3, Y: 0.1, Z: 0}, {X: 0.5, Y: 0.1, Z: 0},
+		},
+		Faces: []model.Face{
+			{Indices: []uint32{0, 1, 2}, Texture: "a_co.paa"},
+			{Indices: []uint32{0, 1, 2}, Material: "a.rvmat"},
+		},
+	}
+
+	got := stripProxySelections(lod)
+
+	assert.Equal(t, lod, got)
+}
+
+func TestStripProxySelectionsKeepsNonProxyShapedUntexturedFace(t *testing.T) {
+	lod := model.LOD{
+		Vertices: []model.Vector3{
+			{X: 0}, {X: 1}, {Y: 1}, // right angle, legs 1:1
+			{X: 0}, {X: 1}, {X: 0.5, Y: 2}, // sides near 1:2, no right angle
+		},
+		Faces: []model.Face{
+			{Indices: []uint32{0, 1, 2}},
+			{Indices: []uint32{3, 4, 5}},
+		},
+	}
+
+	got := stripProxySelections(lod)
+
+	assert.Equal(t, lod, got)
+}
+
+// scarh.p3d LOD 0 has 11 untextured proxy triangles: 7 referenced by
+// "proxy:" selections and 4 orphans that no selection references.
+
 func TestStripProxySelectionsAllGeometryIsProxyProducesEmptyLOD(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{{X: 0}, {X: 1}, {X: 2}},

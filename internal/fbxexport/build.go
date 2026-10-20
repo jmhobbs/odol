@@ -188,7 +188,7 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 			if srcI < len(face.UVs) {
 				uv = face.UVs[srcI]
 			}
-			primaryUVs = append(primaryUVs, float64(uv.U), float64(uv.V))
+			primaryUVs = append(primaryUVs, float64(uv.U), fbxV(uv.V))
 		}
 	}
 
@@ -205,7 +205,7 @@ func buildPart(lod *model.LOD, group componentGroup, partNumber int, matIndexOf 
 				if int(vi) < len(uvSet) {
 					uv = uvSet[vi]
 				}
-				channel = append(channel, float64(uv.U), float64(uv.V))
+				channel = append(channel, float64(uv.U), fbxV(uv.V))
 			}
 		}
 		uvSets = append(uvSets, channel)
@@ -288,4 +288,11 @@ func filteredProperties(lod *model.LOD) ([]string, map[string]string) {
 	keys = append(keys, extra...)
 
 	return keys, filtered
+}
+
+// fbxV converts a P3D V coordinate (0 at the top of the texture) to an FBX
+// V coordinate (0 at the bottom). Computing in float64 keeps it exact, so
+// internal/fbximport's matching flip returns the original float32.
+func fbxV(p3dV float32) float64 {
+	return 1 - float64(p3dV)
 }

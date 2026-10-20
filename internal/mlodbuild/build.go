@@ -77,16 +77,18 @@ type GraphicalLOD struct {
 
 // Options configures Build.
 type Options struct {
-	Texture  string  // .paa path written to every graphical LOD's faces
-	Material string  // .rvmat path written to every graphical LOD's faces
-	Mass     float32 // total mass (kg), split evenly across Geometry LOD's 8 points
+	Texture              string  // .paa path written to every graphical LOD's faces
+	Material             string  // .rvmat path written to every graphical LOD's faces
+	FireGeometryMaterial string  // .rvmat path written to Fire Geometry LOD's faces; empty leaves them blank (see PenetrationMaterialPath)
+	Mass                 float32 // total mass (kg), split evenly across Geometry LOD's 8 points
 }
 
 // Build assembles a complete MLOD model.Model: the supplied graphical LODs
 // (each gets a "camoground" selection and the configured texture/material),
 // plus Geometry/View Geometry/Fire Geometry LODs (a shared bounding-box hull
-// around the union of all graphical LODs' vertices) and a five-point Memory
-// LOD (see the Memory LOD point name constants and memoryLOD).
+// around the union of all graphical LODs' vertices, with Fire Geometry's
+// faces carrying opts.FireGeometryMaterial) and a five-point Memory LOD (see
+// the Memory LOD point name constants and memoryLOD).
 func Build(graphical []GraphicalLOD, opts Options) (*model.Model, error) {
 	if len(graphical) == 0 {
 		return nil, fmt.Errorf("mlodbuild: at least one graphical LOD is required")
@@ -96,6 +98,9 @@ func Build(graphical []GraphicalLOD, opts Options) (*model.Model, error) {
 	seenResolution := make(map[float32]bool, len(graphical))
 	var allVertices []model.Vector3
 	for _, g := range graphical {
+		if math.IsNaN(float64(g.Resolution)) {
+			return nil, fmt.Errorf("mlodbuild: graphical LOD resolution is not a number")
+		}
 		if g.Resolution >= maxGraphicalResolution {
 			return nil, fmt.Errorf("mlodbuild: graphical LOD resolution %g must be below %g", g.Resolution, maxGraphicalResolution)
 		}
@@ -150,7 +155,7 @@ func Build(graphical []GraphicalLOD, opts Options) (*model.Model, error) {
 			Resolution: FireGeometryResolution,
 			Vertices:   box,
 			Normals:    boxNormals,
-			Faces:      boxFaces,
+			Faces:      withTextureMaterial(boxFaces, "", opts.FireGeometryMaterial),
 			Selections: boxComponentSelection,
 		},
 		memoryLOD(box),
@@ -327,8 +332,15 @@ func boundingBox(vertices []model.Vector3) []model.Vector3 {
 // boxGeometry builds an 8-corner box (in boundingBox's corner order) as 6
 // quad faces (one per side, MLOD FaceType 4 - see "P3D Lod Faces.txt"),
 // giving a clean 8-point/12-edge wireframe with no triangulation diagonals,
-// each with one outward-pointing normal per face-vertex (MLOD/FBX
-// convention: normals aren't shared across faces). Winding is verified and
+// each with one normal per face-vertex (MLOD/FBX convention: normals aren't
+// shared across faces).
+//
+// Winding follows MLOD's CW-front convention, the same one
+// internal/fbximport gives graphical LODs: the right-handed cross product of
+// each quad's corners points toward the box center, as in vanilla Geometry
+// LODs (e.g. samples/odolv6/55galdrum.p3d). The opposite winding renders
+// inside out in Buldozer. Each normal follows that same cross product, as
+// vanilla graphical LODs' stored normals do. Winding is verified and
 // corrected per quad against the box's own center, rather than hand-derived
 // per side, so it's correct regardless of how boundingBox orders its
 // corners.
@@ -359,7 +371,7 @@ func boxGeometry(corners []model.Vector3) (normals []model.Vector3, faces []mode
 			centroid.Z += corners[idx].Z / 4
 		}
 		outward := model.Vector3{X: centroid.X - center.X, Y: centroid.Y - center.Y, Z: centroid.Z - center.Z}
-		if dot(n, outward) < 0 {
+		if dot(n, outward) > 0 {
 			quad[0], quad[1], quad[2], quad[3] = quad[3], quad[2], quad[1], quad[0]
 			n = triangleNormal(corners[quad[0]], corners[quad[1]], corners[quad[2]])
 		}

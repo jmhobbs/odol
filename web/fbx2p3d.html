@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DayZ FBX to P3D Builder</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 1100px;
+    margin: 3rem auto;
+    padding: 0 1rem;
+    color: #1a1a1a;
+  }
+  button {
+    margin: 0.25rem 0.5rem 0.25rem 0;
+    padding: 0.5rem 1rem;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.3rem 0.4rem;
+    vertical-align: middle;
+  }
+  th {
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-bottom: 1px solid #ccc;
+  }
+  #lod-table {
+    width: auto;
+  }
+  #lod-table th:first-child,
+  #lod-table td.resolution {
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  #lod-table .row-actions button {
+    margin: 0 0.25rem 0 0;
+    padding: 0.25rem 0.6rem;
+  }
+  .hint {
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .field-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    align-items: end;
+    margin: 1rem 0;
+  }
+  .field-row label {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.85rem;
+    gap: 0.2rem;
+  }
+  .field-row input[type="number"] {
+    width: 6rem;
+  }
+  .field-row input.path {
+    width: 22rem;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  #status {
+    margin-top: 1rem;
+    white-space: pre-wrap;
+  }
+  #status.error {
+    color: #b00020;
+  }
+  #warnings {
+    color: #8a5a00;
+  }
+  #preview {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  @media (max-width: 800px) {
+    #preview {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  #viewer {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #22252a;
+    border-radius: 4px;
+  }
+  #viewer-controls label {
+    display: block;
+    padding: 0.25rem 0;
+    font-size: 0.85rem;
+  }
+  #viewer-caption {
+    font-size: 0.85rem;
+    color: #666;
+  }
+  #scale-reference {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1rem;
+  }
+  #scale-reference h3 {
+    margin: 0 0 0.25rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  #scale-height, #scale-ratio {
+    margin: 0;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+  }
+  #scale-ratio {
+    margin-bottom: 0.4rem;
+  }
+  #scale-reference label {
+    font-size: 0.85rem;
+  }
+  .rig-swatch {
+    display: inline-block;
+    width: 0.8em;
+    height: 0.8em;
+    border-radius: 2px;
+    background: #a57de0;
+    vertical-align: -0.05em;
+  }
+  #lod-stats td.count, #lod-stats th.count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  #lod-stats tbody tr {
+    cursor: pointer;
+  }
+  #lod-stats tbody tr:hover {
+    background: #f0f2f5;
+  }
+  #lod-stats tbody tr.selected {
+    background: #dde8f7;
+  }
+  #lod-stats .selections {
+    font-size: 0.8rem;
+    color: #666;
+  }
+  .ghost-badge {
+    font-size: 0.75rem;
+    color: #2a6db0;
+  }
+</style>
+</head>
+<body>
+<h1>FBX to P3D</h1>
+<p>
+  Build a basic DayZ model from FBX files. Geometry, View Geometry, Fire Geometry, and Memory LODs are added from the bounding box of all graphical LODs, and every graphical LOD gets a <code>camoground</code> named selection.  This isn't meant to be a full-featured P3D editor, it's just a less painful way to import your FBX files into DayZ.
+</p>
+<p>
+  Everything runs locally in your browser - your files are never uploaded. To convert an existing <code>.p3d</code> instead, use the <a href="index.html">P3D converter</a>.
+</p>
+
+<h2>Graphical LODs</h2>
+<p class="hint">
+  Order rows from most to least detailed. A row's resolution is its position: the first row is resolution 1, the next is 2, and so on.
+</p>
+<table id="lod-table">
+  <thead>
+    <tr>
+      <th>Resolution</th>
+      <th>FBX file</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<button id="add-lod">Add LOD</button>
+
+<div class="field-row">
+  <label>Texture (.paa) for every graphical LOD
+    <input type="text" id="texture" class="path" placeholder="optional, e.g. mymod\data\item_co.paa">
+  </label>
+  <label>Material (.rvmat) for every graphical LOD
+    <input type="text" id="material" class="path" placeholder="optional, e.g. mymod\data\item.rvmat">
+  </label>
+</div>
+
+<template id="lod-row-template">
+  <tr>
+    <td class="resolution"></td>
+    <td><input type="file" class="fbx-file" accept=".fbx" aria-label="FBX file"></td>
+    <td class="row-actions">
+      <button class="move-up" aria-label="Move up one level" title="Move up one level">&#9650;</button>
+      <button class="move-down" aria-label="Move down one level" title="Move down one level">&#9660;</button>
+      <button class="remove-lod" aria-label="Remove LOD">Remove</button>
+    </td>
+  </tr>
+</template>
+
+<div id="settings" class="field-row">
+  <label>Fire Geometry material
+    <select id="fire-material">
+      <option value="">None</option>
+    </select>
+  </label>
+  <label>Mass (kg)
+    <input type="number" id="mass" value="1" min="0" step="any">
+  </label>
+  <label>Scale
+    <input type="number" id="scale" value="1.00" min="0.01" step="0.01">
+  </label>
+  <label>Output file
+    <input type="text" id="output-name" placeholder="model.p3d">
+  </label>
+  <button id="download" disabled>Download P3D</button>
+</div>
+
+<div id="status"></div>
+<ul id="warnings"></ul>
+
+<div id="preview">
+  <div id="viewer-wrap">
+    <canvas id="viewer"></canvas>
+    <p id="viewer-caption">
+      Preview of the built P3D, after scale and recentering. Drag to rotate, scroll to zoom.
+    </p>
+  </div>
+  <div>
+    <section id="scale-reference">
+      <h3>Scale reference</h3>
+      <p id="scale-height"></p>
+      <p id="scale-ratio"></p>
+      <label><input type="checkbox" id="rig-toggle"> Show the male player rig <span class="rig-swatch"></span> beside the model</label>
+    </section>
+    <div id="viewer-controls">
+      <label><input type="checkbox" id="ghost-toggle" checked> Ghost of the highest-detail LOD</label>
+      <label><input type="checkbox" id="wireframe-toggle"> Wireframe</label>
+    </div>
+    <table id="lod-stats">
+      <thead>
+        <tr>
+          <th>LOD</th>
+          <th class="count">Vertices</th>
+          <th class="count">Faces</th>
+          <th class="count">Triangles</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<p>
+  Also available as a command line tool, <a href="https://github.com/jmhobbs/odol">github.com/jmhobbs/odol</a>
+</p>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="fbx2p3d.js"></script>
+</body>
+</html>

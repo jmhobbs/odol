@@ -646,8 +646,10 @@ func buildModel(name string, version uint32, info rawModelInfo, animations *rawA
 			})
 		}
 
-		for faceIndex, face := range raw.faces {
-			section := findSection(raw.sections, uint32(faceIndex))
+		faceOffset := uint32(0)
+		for _, face := range raw.faces {
+			section := findSection(raw.sections, faceOffset)
+			faceOffset += faceMemorySize(face)
 			texture := ""
 			if section != nil && section.commonTexture >= 0 && int(section.commonTexture) < len(raw.textures) {
 				texture = raw.textures[section.commonTexture]
@@ -2839,14 +2841,26 @@ func (lod rawLod) uvFor(index uint32) model.UV {
 	return lod.uvSets[0][index]
 }
 
-func findSection(sections []rawSection, faceIndex uint32) *rawSection {
+// findSection returns the section whose byte range holds the face starting
+// at faceOffset, or nil. Section bounds are offsets into the engine's
+// in-memory face array, not face indices (see faceMemorySize).
+func findSection(sections []rawSection, faceOffset uint32) *rawSection {
 	for i := range sections {
 		section := &sections[i]
-		if faceIndex >= section.faceLower && faceIndex < section.faceUpper {
+		if faceOffset >= section.faceLower && faceOffset < section.faceUpper {
 			return section
 		}
 	}
 	return nil
+}
+
+// faceMemorySize returns the bytes a face takes in the engine's in-memory
+// face array, the unit section bounds are measured in: 8 for a triangle,
+// 10 for a quad (see docs/P3D Lod Sections.txt). It matches the last
+// section's bound in every ODOL sample (raw versions 53-55). Versions 69+
+// store u32 indices on disk, and no sample covers them.
+func faceMemorySize(face rawFace) uint32 {
+	return 2 + 2*uint32(len(face.indices))
 }
 
 func sectionFlags(section *rawSection) uint32 {

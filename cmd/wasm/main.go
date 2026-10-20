@@ -1,27 +1,34 @@
 //go:build js && wasm
 
-// Command wasm exposes odol's P3D -> MLOD/FBX conversion to JavaScript via
-// syscall/js, for use from a browser (see web/). It is a thin bridge: all
-// conversion rules live in internal/convert; this file only marshals
-// js.Value <-> Go types and packages results for JS to consume.
+// Command wasm exposes odol's P3D -> MLOD/FBX conversion and the fbx2p3d
+// FBX -> MLOD build to JavaScript via syscall/js, for use from a browser
+// (see web/). It is a thin bridge: all conversion rules live in
+// internal/convert and internal/fbx2p3d; this file only marshals js.Value
+// <-> Go types and packages results for JS to consume.
 package main
 
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"path"
 	"strings"
 	"syscall/js"
 
 	"github.com/jmhobbs/odol/internal/convert"
 	"github.com/jmhobbs/odol/internal/detector"
+	"github.com/jmhobbs/odol/internal/fbx2p3d"
+	"github.com/jmhobbs/odol/internal/mlodbuild"
 )
 
 func main() {
 	js.Global().Set("odolConvertToMLOD", js.FuncOf(convertToMLOD))
 	js.Global().Set("odolConvertToFBX", js.FuncOf(convertToFBX))
 	js.Global().Set("odolDetectFormat", js.FuncOf(detectFormat))
+	js.Global().Set("odolPenetrationMaterials", js.FuncOf(penetrationMaterials))
+	js.Global().Set("odolFBXToP3D", js.FuncOf(fbxToP3D))
 	select {}
 }
 
@@ -82,10 +89,7 @@ func detectFormat(_ js.Value, args []js.Value) (result any) {
 	if len(args) < 1 {
 		return errorResult("odolDetectFormat: expected 1 argument (data)")
 	}
-	data := make([]byte, args[0].Get("length").Int())
-	js.CopyBytesToGo(data, args[0])
-
-	format, err := detector.Detect(bytes.NewReader(data))
+	format, err := detector.Detect(bytes.NewReader(bytesToGo(args[0])))
 	if err != nil {
 		return errorResult(err.Error())
 	}
@@ -96,6 +100,139 @@ func detectFormat(_ js.Value, args []js.Value) (result any) {
 	})
 }
 
+// penetrationMaterials() -> string[]
+// Every vanilla Fire Geometry material name odolFBXToP3D accepts as
+// fireMaterial, sorted.
+func penetrationMaterials(_ js.Value, _ []js.Value) any {
+	return stringsToJS(mlodbuild.PenetrationMaterialNames())
+}
+
+// fbxToP3D(request) -> {ok, data: Uint8Array, preview, warnings, error}
+//
+// request is {lods: [{resolution, name, data: Uint8Array}], texture,
+// material, fireMaterial, mass, scale}. preview mirrors fbx2p3d.ModelPreview, with each
+// LOD's mesh as positions: Float32Array and triangles: Uint32Array.
+func fbxToP3D(_ js.Value, args []js.Value) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errorResult(fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	if len(args) < 1 {
+		return errorResult("odolFBXToP3D: expected 1 argument (request)")
+	}
+	request := args[0]
+
+	jsLODs := request.Get("lods")
+	sources := make([]fbx2p3d.LODSource, jsLODs.Length())
+	for i := range sources {
+		lod := jsLODs.Index(i)
+		data := bytesToGo(lod.Get("data"))
+		sources[i] = fbx2p3d.LODSource{
+			Resolution: float32(lod.Get("resolution").Float()),
+			Name:       optionalString(lod.Get("name")),
+			Load:       func() ([]byte, error) { return data, nil },
+		}
+	}
+
+	converted, err := fbx2p3d.Convert(fbx2p3d.ConvertRequest{
+		LODs:         sources,
+		Texture:      optionalString(request.Get("texture")),
+		Material:     optionalString(request.Get("material")),
+		FireMaterial: optionalString(request.Get("fireMaterial")),
+		Mass:         float32(request.Get("mass").Float()),
+		Scale:        float32(request.Get("scale").Float()),
+	})
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
+	return js.ValueOf(map[string]any{
+		"ok":       true,
+		"data":     bytesToJS(converted.P3D),
+		"preview":  previewToJS(converted.Preview),
+		"warnings": stringsToJS(converted.Warnings),
+	})
+}
+
+func previewToJS(preview fbx2p3d.ModelPreview) map[string]any {
+	lods := make([]any, len(preview.LODs))
+	for i, lod := range preview.LODs {
+		lods[i] = map[string]any{
+			"name":          lod.Name,
+			"resolution":    float64(lod.Resolution),
+			"graphical":     lod.Graphical,
+			"vertexCount":   lod.VertexCount,
+			"faceCount":     lod.FaceCount,
+			"triangleCount": lod.TriangleCount,
+			"selections":    stringsToJS(lod.Selections),
+			"positions":     float32sToJS(lod.Mesh.Positions),
+			"triangles":     uint32sToJS(lod.Mesh.Triangles),
+		}
+	}
+	return map[string]any{
+		"lods":               lods,
+		"highestDetailIndex": preview.HighestDetailIndex,
+		"boundingSize": map[string]any{
+			"x": float64(preview.BoundingSize.X),
+			"y": float64(preview.BoundingSize.Y),
+			"z": float64(preview.BoundingSize.Z),
+		},
+		"heightRatio":                preview.HeightRatio,
+		"referenceHumanHeightMeters": fbx2p3d.ReferenceHumanHeightMeters,
+	}
+}
+
+// optionalString returns v as a Go string, or "" when v is not a JS string.
+// js.Value.String turns undefined into "<undefined>", which would otherwise
+// land in the P3D as a texture path.
+func optionalString(v js.Value) string {
+	if v.Type() != js.TypeString {
+		return ""
+	}
+	return v.String()
+}
+
+func stringsToJS(values []string) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
+}
+
+func bytesToGo(v js.Value) []byte {
+	data := make([]byte, v.Get("length").Int())
+	js.CopyBytesToGo(data, v)
+	return data
+}
+
+func bytesToJS(data []byte) js.Value {
+	jsData := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(jsData, data)
+	return jsData
+}
+
+// float32sToJS and uint32sToJS copy through a Uint8Array, the only typed
+// array syscall/js copies into, and view its buffer as the wider type. Both
+// sides are little-endian (wasm always is, and so is every browser target).
+func float32sToJS(values []float32) js.Value {
+	data := make([]byte, len(values)*4)
+	for i, v := range values {
+		binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(v))
+	}
+	return js.Global().Get("Float32Array").New(bytesToJS(data).Get("buffer"))
+}
+
+func uint32sToJS(values []uint32) js.Value {
+	data := make([]byte, len(values)*4)
+	for i, v := range values {
+		binary.LittleEndian.PutUint32(data[i*4:], v)
+	}
+	return js.Global().Get("Uint32Array").New(bytesToJS(data).Get("buffer"))
+}
+
 // readNameAndBytes parses the (name string, data Uint8Array) argument pair
 // shared by both exported functions, deriving a path/extension-free base
 // name for use in output filenames.
@@ -104,9 +241,7 @@ func readNameAndBytes(args []js.Value) (name string, data []byte, err error) {
 		return "", nil, fmt.Errorf("expected at least 2 arguments (name, data)")
 	}
 	name = baseName(args[0].String())
-	data = make([]byte, args[1].Get("length").Int())
-	js.CopyBytesToGo(data, args[1])
-	return name, data, nil
+	return name, bytesToGo(args[1]), nil
 }
 
 // baseName strips any path and extension from a browser-supplied filename.
@@ -159,12 +294,10 @@ func withRecover(fn func() (filename string, data []byte, err error)) (result js
 }
 
 func successResult(filename string, data []byte) js.Value {
-	jsData := js.Global().Get("Uint8Array").New(len(data))
-	js.CopyBytesToJS(jsData, data)
 	return js.ValueOf(map[string]any{
 		"ok":       true,
 		"filename": filename,
-		"data":     jsData,
+		"data":     bytesToJS(data),
 	})
 }
 

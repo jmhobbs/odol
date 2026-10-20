@@ -201,11 +201,13 @@ func TestBuildSceneUVs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
 	// Face slots are reordered per windingFixedSourceIndex (see
-	// TestBuildScenePolyIndex): index 0, then 2, then 1.
+	// TestBuildScenePolyIndex): index 0, then 2, then 1. V is written as
+	// 1 - V because P3D puts V = 0 at the top of the texture and FBX puts it
+	// at the bottom.
 	want := []float64{
-		float64(float32(0.1)), float64(float32(0.2)),
-		float64(float32(0.5)), float64(float32(0.6)),
-		float64(float32(0.3)), float64(float32(0.4)),
+		float64(float32(0.1)), 1 - float64(float32(0.2)),
+		float64(float32(0.5)), 1 - float64(float32(0.6)),
+		float64(float32(0.3)), 1 - float64(float32(0.4)),
 	}
 	assert.Equal(t, want, s.parts[0].geometry.uvSets[0])
 }
@@ -224,7 +226,8 @@ func TestBuildSceneUVsMissing(t *testing.T) {
 	s, err := buildScene(m)
 	require.NoError(t, err)
 	require.Len(t, s.parts, 1)
-	assert.Equal(t, []float64{0, 0, 0, 0, 0, 0}, s.parts[0].geometry.uvSets[0])
+	// A missing UV is P3D (0, 0), which is FBX (0, 1).
+	assert.Equal(t, []float64{0, 1, 0, 1, 0, 1}, s.parts[0].geometry.uvSets[0])
 }
 
 func TestBuildSceneSingleUVSetProducesLengthOne(t *testing.T) {
@@ -264,9 +267,9 @@ func TestBuildSceneAdditionalUVSetIndexedByFaceIndices(t *testing.T) {
 	// (this additional UV set is looked up by original vertex index, not
 	// the part's remapped local index - see the setIdx loop in buildPart)
 	want := []float64{
-		float64(float32(0.5)), float64(float32(0.6)),
-		float64(float32(0.3)), float64(float32(0.4)),
-		float64(float32(0.1)), float64(float32(0.2)),
+		float64(float32(0.5)), 1 - float64(float32(0.6)),
+		float64(float32(0.3)), 1 - float64(float32(0.4)),
+		float64(float32(0.1)), 1 - float64(float32(0.2)),
 	}
 	assert.Equal(t, want, s.parts[0].geometry.uvSets[1])
 }
@@ -283,11 +286,12 @@ func TestBuildSceneAdditionalUVIndexOutOfRangeFallsToZero(t *testing.T) {
 	require.Len(t, s.parts, 1)
 	// Face slots are reordered per windingFixedSourceIndex, so slot 1 reads
 	// vertex 2 (uvSet index 2, out of range -> {0,0}); slots 0 and 2 read
-	// vertices 0 and 1, both in range.
+	// vertices 0 and 1, both in range. The fallback is P3D (0, 0), which is
+	// FBX (0, 1).
 	want := []float64{
-		float64(float32(0.1)), float64(float32(0.2)),
-		0, 0,
-		float64(float32(0.3)), float64(float32(0.4)),
+		float64(float32(0.1)), 1 - float64(float32(0.2)),
+		0, 1,
+		float64(float32(0.3)), 1 - float64(float32(0.4)),
 	}
 	assert.Equal(t, want, s.parts[0].geometry.uvSets[1])
 }

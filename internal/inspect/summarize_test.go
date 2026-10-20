@@ -77,6 +77,23 @@ func TestSummarizeLODCounts(t *testing.T) {
 	assert.True(t, s.LODs[1].Partial)
 }
 
+// TestSummarizeCountsTriangles checks that a quad counts as two triangles,
+// and that a face with fewer than 3 indices counts as none.
+func TestSummarizeCountsTriangles(t *testing.T) {
+	m := &model.Model{LODs: []model.LOD{{
+		Resolution: 1.0,
+		Faces: []model.Face{
+			{Indices: []uint32{0, 1, 2}},
+			{Indices: []uint32{0, 1, 2, 3}},
+			{},
+		},
+	}}}
+
+	s := Summarize(m, detector.P3DFormat{Family: detector.P3DFamilyMLOD})
+	require.Len(t, s.LODs, 1)
+	assert.Equal(t, 3, s.LODs[0].TriangleCount)
+}
+
 func TestSummarizeTextureMaterialDedup(t *testing.T) {
 	s := Summarize(fixtureModel(), detector.P3DFormat{})
 

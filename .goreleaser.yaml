@@ -34,11 +34,24 @@ builds:
       - arm64
       - amd64
       - "386"
+  - main: ./cmd/fbx2p3d/
+    id: fbx2p3d
+    binary: fbx2p3d
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+      - "386"
 
 archives:
   - formats: [tar.gz]
     name_template: >-
-      odol-convert_
+      odol_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386

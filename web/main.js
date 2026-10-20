@@ -2,60 +2,16 @@
 // picker/buttons, drives Blob downloads, and renders a WebGL preview of
 // the converted FBX. No parsing/conversion logic lives here - see
 // worker.js and cmd/wasm/main.go. No WebGL logic lives here - see
-// viewer.js.
+// viewer.js. The worker request/response protocol lives in
+// worker-client.js.
 import { initViewer, loadModel, clearModel, setCheckerEnabled, loadRig, clearRig } from './viewer.js';
+import { createWorkerClient, downloadBlob } from './worker-client.js';
 
-const worker = new Worker('worker.js');
-
-let nextRequestId = 1;
-const pendingRequests = new Map();
-
-const readyPromise = new Promise((resolve, reject) => {
-  worker.onmessage = (event) => {
-    const msg = event.data;
-
-    if (msg.type === 'ready') {
-      resolve();
-      return;
-    }
-    if (msg.type === 'fatal') {
-      reject(new Error(msg.error));
-      return;
-    }
-
-    const pending = pendingRequests.get(msg.id);
-    if (!pending) return;
-    pendingRequests.delete(msg.id);
-    if (msg.ok) {
-      // Passed through whole: conversions carry {filename, data}, 'detect'
-      // carries {family} instead - callers pick out what their action
-      // produces.
-      pending.resolve(msg);
-    } else {
-      pending.reject(new Error(msg.error));
-    }
-  };
-  worker.onerror = (event) => reject(new Error(event.message));
-});
+const workerClient = createWorkerClient('worker.js');
+const readyPromise = workerClient.ready;
 
 function convert(action, name, arrayBuffer, ascii) {
-  const id = nextRequestId++;
-  return new Promise((resolve, reject) => {
-    pendingRequests.set(id, { resolve, reject });
-    worker.postMessage({ id, action, name, data: arrayBuffer, ascii }, [arrayBuffer]);
-  });
-}
-
-function downloadBlob(filename, arrayBuffer) {
-  const blob = new Blob([arrayBuffer]);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  return workerClient.request({ action, name, data: arrayBuffer, ascii }, [arrayBuffer]);
 }
 
 const fileInput = document.getElementById('file-input');

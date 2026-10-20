@@ -10,59 +10,22 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/jmhobbs/odol/internal/fbx2p3d"
 	"github.com/jmhobbs/odol/internal/model"
 )
-
-// referenceHumanHeightMeters is the Y-axis (up) extent of LOD 0 (the
-// highest-detail visual LOD, resolution 1.0) in
-// samples/mlod/character_male.p3d, this project's player rig reference -
-// measured via internal/mlod.Parse plus a min/max sweep over its vertices,
-// not rounded to the nominal "1.8m" expectation so the constant's
-// provenance stays traceable to the actual measurement.
-const referenceHumanHeightMeters = 1.7976
 
 // errCancelled is returned by confirmContinue, and therefore by any
 // confirmFunc built on it, when the user declines to proceed.
 var errCancelled = errors.New("fbx2p3d: cancelled by user")
 
-// boundingBoxSize returns the (width, height, depth) extent of vertices
-// along X, Y, Z respectively. MLOD/ODOL use Y as the up axis.
-func boundingBoxSize(vertices []model.Vector3) model.Vector3 {
-	if len(vertices) == 0 {
-		return model.Vector3{}
-	}
-	min, max := vertices[0], vertices[0]
-	for _, v := range vertices[1:] {
-		if v.X < min.X {
-			min.X = v.X
-		}
-		if v.Y < min.Y {
-			min.Y = v.Y
-		}
-		if v.Z < min.Z {
-			min.Z = v.Z
-		}
-		if v.X > max.X {
-			max.X = v.X
-		}
-		if v.Y > max.Y {
-			max.Y = v.Y
-		}
-		if v.Z > max.Z {
-			max.Z = v.Z
-		}
-	}
-	return model.Vector3{X: max.X - min.X, Y: max.Y - min.Y, Z: max.Z - min.Z}
-}
-
 // printSizePreview writes a human-readable bounding box and a
 // height-vs-reference comparison to w.
 func printSizePreview(w io.Writer, lodPath string, size model.Vector3) {
-	ratio := float64(size.Y) / referenceHumanHeightMeters
+	ratio := float64(size.Y) / fbx2p3d.ReferenceHumanHeightMeters
 	_, _ = fmt.Fprintf(w, "fbx2p3d: preview: %s bounding box (X,Y,Z) = %.4fm x %.4fm x %.4fm\n",
 		lodPath, size.X, size.Y, size.Z)
-	_, _ = fmt.Fprintf(w, "fbx2p3d: preview: height %.4fm is %.2fx the reference human height (%.4fm, measured from samples/mlod/character_male.p3d)\n",
-		size.Y, ratio, referenceHumanHeightMeters)
+	_, _ = fmt.Fprintf(w, "fbx2p3d: preview: height %.4fm is %.2fx the reference human height (%.4fm, measured from the male player model)\n",
+		size.Y, ratio, fbx2p3d.ReferenceHumanHeightMeters)
 }
 
 // isInteractive reports whether f is a real terminal, as opposed to a pipe,

@@ -209,6 +209,32 @@ func TestBuildAppliesTextureMaterialOnlyToGraphicalLODs(t *testing.T) {
 	}
 }
 
+// TestBuildAppliesFireGeometryMaterialOnlyToFireGeometryLOD checks that the
+// penetration material lands on Fire Geometry only, matching vanilla MLODs
+// such as samples/mlod/55galdrum_mlod.p3d. Geometry and View Geometry share
+// the same box faces, so this also guards against the material leaking into
+// them through a shared slice.
+func TestBuildAppliesFireGeometryMaterialOnlyToFireGeometryLOD(t *testing.T) {
+	opts := defaultOptions()
+	opts.FireGeometryMaterial = "dz\\data\\data\\penetration\\wood.rvmat"
+	m, err := Build([]GraphicalLOD{sampleGraphicalLOD(1.0, 0)}, opts)
+	require.NoError(t, err)
+
+	fire := findLOD(t, m, FireGeometryResolution)
+	require.NotEmpty(t, fire.Faces)
+	for _, f := range fire.Faces {
+		assert.Equal(t, opts.FireGeometryMaterial, f.Material)
+		assert.Empty(t, f.Texture)
+	}
+
+	for _, res := range []float32{GeometryResolution, ViewGeometryResolution} {
+		lod := findLOD(t, m, res)
+		for _, f := range lod.Faces {
+			assert.Emptyf(t, f.Material, "resolution %g must not carry the fire geometry material", res)
+		}
+	}
+}
+
 func TestCenteringOffset(t *testing.T) {
 	vertices := []model.Vector3{{X: 1, Y: 2, Z: 3}, {X: 5, Y: 10, Z: 9}}
 	got := centeringOffset(vertices)
@@ -351,34 +377,32 @@ func max32(a, b float32) float32 {
 	return b
 }
 
-func TestBoxGeometryNormalsPointOutward(t *testing.T) {
+// signedVolume returns the volume enclosed by faces, fan-triangulating each
+// one from its first corner. Its sign gives the winding: positive when the
+// right-handed cross product of each face's corners points out of the solid,
+// negative when it points in.
+
+// TestBoxGeometryWindingMatchesVanillaGeometryLOD pins the box's winding to
+// a real game file rather than to a hand-derived rule. A box wound the other
+// way renders inside out in Buldozer.
+
+// TestBoxGeometryNormalsFollowWinding checks each stored normal agrees with
+// the right-handed cross product of its face's corners, as vanilla graphical
+// LODs and fbximport's output do.
+func TestBoxGeometryNormalsFollowWinding(t *testing.T) {
 	corners := boundingBox([]model.Vector3{{X: -1, Y: -1, Z: -1}, {X: 1, Y: 1, Z: 1}})
 	normals, faces := boxGeometry(corners)
-
-	var center model.Vector3
-	for _, c := range corners {
-		center.X += c.X / 8
-		center.Y += c.Y / 8
-		center.Z += c.Z / 8
-	}
 
 	require.Len(t, faces, 6, "8-point box hull must be 6 quad faces")
 	for _, f := range faces {
 		require.Len(t, f.Indices, 4)
 		require.Len(t, f.NormalIndices, 4)
 
-		var centroid model.Vector3
-		for _, idx := range f.Indices {
-			v := corners[idx]
-			centroid.X += v.X / 4
-			centroid.Y += v.Y / 4
-			centroid.Z += v.Z / 4
+		winding := triangleNormal(corners[f.Indices[0]], corners[f.Indices[1]], corners[f.Indices[2]])
+		for _, normalIdx := range f.NormalIndices {
+			n := normals[normalIdx]
+			assert.Greaterf(t, dot(n, winding), float32(0), "face normal %v should agree with face winding %v", n, winding)
 		}
-		outward := model.Vector3{X: centroid.X - center.X, Y: centroid.Y - center.Y, Z: centroid.Z - center.Z}
-
-		n := normals[f.NormalIndices[0]]
-		dot := n.X*outward.X + n.Y*outward.Y + n.Z*outward.Z
-		assert.Greaterf(t, dot, float32(0), "face normal %v should point away from box center (outward %v)", n, outward)
 	}
 }
 
@@ -407,6 +431,14 @@ func TestBoxGeometryHasTwelveEdgesNoDiagonals(t *testing.T) {
 func TestBuildRejectsNonGraphicalResolution(t *testing.T) {
 	_, err := Build([]GraphicalLOD{sampleGraphicalLOD(GeometryResolution, 0)}, defaultOptions())
 	assert.Error(t, err)
+}
+
+// TestBuildRejectsNaNResolution guards the CLI's "--lod NaN=...", which
+// strconv.ParseFloat accepts: NaN passes the < 1000 check and never equals
+// itself, so it would slip past both the range and duplicate checks.
+func TestBuildRejectsNaNResolution(t *testing.T) {
+	_, err := Build([]GraphicalLOD{sampleGraphicalLOD(float32(math.NaN()), 0)}, defaultOptions())
+	assert.ErrorContains(t, err, "not a number")
 }
 
 func TestBuildRejectsDuplicateResolutions(t *testing.T) {

@@ -14,20 +14,6 @@ import (
 	"github.com/jmhobbs/odol/internal/model"
 )
 
-func TestBoundingBoxSize(t *testing.T) {
-	vertices := []model.Vector3{
-		{X: -1, Y: 0, Z: -2},
-		{X: 1, Y: 3, Z: 2},
-		{X: 0, Y: -1, Z: 0},
-	}
-	got := boundingBoxSize(vertices)
-	assert.Equal(t, model.Vector3{X: 2, Y: 4, Z: 4}, got)
-}
-
-func TestBoundingBoxSizeEmpty(t *testing.T) {
-	assert.Equal(t, model.Vector3{}, boundingBoxSize(nil))
-}
-
 func TestConfirmContinueAcceptsY(t *testing.T) {
 	var out bytes.Buffer
 	err := confirmContinue(strings.NewReader("y\n"), &out)
@@ -110,4 +96,15 @@ func TestNewConfirmFuncPromptDeclines(t *testing.T) {
 
 	err := confirm("lod.fbx", model.Vector3{X: 1, Y: 2, Z: 3})
 	assert.ErrorIs(t, err, errCancelled)
+}
+
+// The reference model ships only with this repo's private sample assets, so
+// the preview names it in words rather than by a path users can't open.
+func TestPrintSizePreviewNamesReferenceModelWithoutFilePath(t *testing.T) {
+	var out bytes.Buffer
+	printSizePreview(&out, "lod.fbx", model.Vector3{X: 0.3, Y: 0.4, Z: 0.3})
+
+	text := out.String()
+	assert.Contains(t, text, "measured from the male player model")
+	assert.NotContains(t, text, ".p3d")
 }
