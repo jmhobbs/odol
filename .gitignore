@@ -1,3 +1,6 @@
 /web/public/
+/convert
+/fbx2p3d
+/p3dinspect
 # Added by goreleaser init:
 dist/

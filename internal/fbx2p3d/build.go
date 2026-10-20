@@ -7,6 +7,7 @@ package fbx2p3d
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jmhobbs/odol/internal/fbximport"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
@@ -30,6 +31,9 @@ type LODSource struct {
 	// Load returns the FBX bytes. Build calls it only when it reaches this
 	// LOD, so a declined AfterFirstLOD hook never reads later files.
 	Load func() ([]byte, error)
+	// Normals picks how the file's normals convert to MLOD normals. The
+	// zero value, fbximport.NormalConventionAuto, detects it per geometry.
+	Normals fbximport.NormalConvention
 }
 
 // Hooks lets callers observe and gate Build. Every field is optional.
@@ -68,10 +72,11 @@ func Build(sources []LODSource, opts mlodbuild.Options, scale float32, hooks Hoo
 		if err != nil {
 			return nil, err
 		}
-		mesh, err := fbximport.Import(data)
+		mesh, err := fbximport.Import(data, source.Normals)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", source.Name, err)
 		}
+		hooks.logf("LOD %g normals: %s", source.Resolution, describeNormalConventions(source.Normals, mesh.NormalConventions))
 		if mesh.BestEffortPolygons > 0 {
 			hooks.warnf("%s has %d self-intersecting or zero-area polygon(s), imported best-effort (triangles may be flipped or overlap). Fix them in the source model.", source.Name, mesh.BestEffortPolygons)
 		}
@@ -93,6 +98,24 @@ func Build(sources []LODSource, opts mlodbuild.Options, scale float32, hooks Hoo
 
 	hooks.logf("building auxiliary LODs (Geometry, View Geometry, Fire Geometry, Memory)")
 	return mlodbuild.Build(graphical, opts)
+}
+
+// describeNormalConventions names the conventions an import resolved to,
+// each once, and marks them as detected when requested was auto.
+func describeNormalConventions(requested fbximport.NormalConvention, resolved []fbximport.NormalConvention) string {
+	var names []string
+	seen := make(map[fbximport.NormalConvention]bool)
+	for _, convention := range resolved {
+		if !seen[convention] {
+			seen[convention] = true
+			names = append(names, convention.String())
+		}
+	}
+	description := strings.Join(names, ", ")
+	if requested == fbximport.NormalConventionAuto {
+		description += " (auto-detected)"
+	}
+	return description
 }
 
 // ValidateScale rejects scale factors that can't produce sensible geometry:

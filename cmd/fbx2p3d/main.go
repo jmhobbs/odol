@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/jmhobbs/odol/internal/fbx2p3d"
+	"github.com/jmhobbs/odol/internal/fbximport"
 	"github.com/jmhobbs/odol/internal/mlod"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
 )
@@ -29,11 +30,13 @@ func main() {
 	mass := flag.Float64("mass", 1.0, "total Geometry LOD mass in kg, split evenly across its 8 points")
 	scale := flag.Float64("scale", 1.0, "uniform correction factor applied to every imported LOD's vertex positions, to fix a real-world unit mismatch from the source FBX")
 	output := flag.String("o", "", "output P3D path (default: derived from the lowest-resolution --lod file)")
+	var normals fbximport.NormalConvention
+	flag.Var(&normals, "normals", "how FBX normals convert: auto (detect per mesh), dayz (DayZ tools, Z mirrored), or standard (Blender and most other tools)")
 	var yes bool
 	flag.BoolVar(&yes, "y", false, "skip the size-preview confirmation prompt (also auto-skipped when stdin is not a terminal)")
 	flag.BoolVar(&yes, "yes", false, "long form of -y")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s --lod <resolution>=<path.fbx> [--lod ...] [--texture <path.paa>] [--material <path.rvmat>] [--fire-material <name>] [--scale <factor>] [-y] [-o output.p3d]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s --lod <resolution>=<path.fbx> [--lod ...] [--texture <path.paa>] [--material <path.rvmat>] [--fire-material <name>] [--scale <factor>] [--normals auto|dayz|standard] [-y] [-o output.p3d]\n", os.Args[0])
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "\nvalid --fire-material names:")
 		fmt.Fprint(os.Stderr, wrapList(mlodbuild.PenetrationMaterialNames(), "  ", 80))
@@ -71,7 +74,7 @@ func main() {
 	skipPrompt := yes || !isInteractive(os.Stdin)
 	confirm := newConfirmFunc(os.Stderr, os.Stdin, skipPrompt)
 
-	if err := run(lods, opts, float32(*scale), outPath, os.Stderr, confirm); err != nil {
+	if err := run(lods, opts, float32(*scale), normals, outPath, os.Stderr, confirm); err != nil {
 		if errors.Is(err, errCancelled) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(0)
@@ -169,7 +172,7 @@ func outputPath(lods []lodEntry, explicit string) string {
 	return filepath.Join(dir, base+".p3d")
 }
 
-func run(lods []lodEntry, opts mlodbuild.Options, scale float32, outPath string, logOutput io.Writer, confirm confirmFunc) error {
+func run(lods []lodEntry, opts mlodbuild.Options, scale float32, normals fbximport.NormalConvention, outPath string, logOutput io.Writer, confirm confirmFunc) error {
 	logger := stepLogger{w: logOutput}
 
 	sources := make([]fbx2p3d.LODSource, len(lods))
@@ -178,6 +181,7 @@ func run(lods []lodEntry, opts mlodbuild.Options, scale float32, outPath string,
 			Resolution: e.Resolution,
 			Name:       e.Path,
 			Load:       func() ([]byte, error) { return os.ReadFile(e.Path) },
+			Normals:    normals,
 		}
 	}
 	hooks := fbx2p3d.Hooks{

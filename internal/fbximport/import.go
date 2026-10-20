@@ -2,8 +2,9 @@
 // suitable for use as one MLOD graphical LOD. It is the inverse of
 // internal/fbxexport: it reads the same node shapes that package writes
 // (Vertices/PolygonVertexIndex/LayerElementNormal/LayerElementUV, all
-// ByPolygonVertex) and also tolerates the IndexToDirect reference mode
-// common in FBX files from other DCC tools.
+// ByPolygonVertex) and also reads the other layer mappings (ByVertice,
+// ByPolygon, AllSame) and the IndexToDirect reference mode common in FBX
+// files from other DCC tools.
 package fbximport
 
 import (
@@ -31,17 +32,24 @@ type Mesh struct {
 	// exactly cover them. They are still imported, but some of their
 	// triangles may be flipped or overlap. The fix is in the source model.
 	BestEffortPolygons int
+
+	// NormalConventions holds the convention each Geometry node's normals
+	// were converted with, in file order. With NormalConventionAuto these
+	// are the detected conventions.
+	NormalConventions []NormalConvention
 }
 
 // Import decodes a binary FBX file and merges every Geometry node it
 // contains into a single mesh, applying each geometry's parent Model
 // transform and converting FBX's centimeter units back to MLOD's meters.
+// normals picks how FBX normals convert to MLOD normals; see
+// NormalConvention.
 //
 // Multiple Geometry nodes in one file are supported because canonical
 // DayZ-style FBX exports split one LOD's mesh into per-connected-component
 // parts (see internal/fbxexport/components.go) - merging here is the
 // inverse of that split, and is a no-op for a plain single-mesh file.
-func Import(data []byte) (*Mesh, error) {
+func Import(data []byte, normals NormalConvention) (*Mesh, error) {
 	doc, err := fbxbinary.Decode(data)
 	if err != nil {
 		return nil, err
@@ -73,11 +81,12 @@ func Import(data []byte) (*Mesh, error) {
 			}
 		}
 
-		geometry, err := decodeGeometry(g)
+		geometry, err := decodeGeometry(g, normals)
 		if err != nil {
 			return nil, fmt.Errorf("fbximport: geometry %q: %w", geometryLabel(g), err)
 		}
 		mesh.BestEffortPolygons += geometry.bestEffortPolygons
+		mesh.NormalConventions = append(mesh.NormalConventions, geometry.normalConvention)
 
 		vertexOffset := uint32(len(mesh.Vertices))
 		for _, v := range geometry.vertices {
@@ -161,20 +170,23 @@ type decodedGeometry struct {
 	normals            []model.Vector3
 	faces              []model.Face
 	bestEffortPolygons int
+	normalConvention   NormalConvention // as resolved, never NormalConventionAuto
 }
 
 // decodeGeometry decodes one Geometry node's vertex positions (still in FBX
 // raw/centimeter units - callers apply unit conversion), per-polygon-vertex
-// normals, and triangle/quad faces with inline UVs. Only the
-// "ByPolygonVertex" mapping mode is supported (matching internal/fbxexport's
-// own writer and the overwhelming majority of real-world exports); "Direct"
-// and "IndexToDirect" reference modes are both supported. MLOD's FaceType is
+// normals, and triangle/quad faces with inline UVs. Layers may map
+// ByPolygonVertex (internal/fbxexport's own writer), ByVertice (Blender 4.1+
+// for smooth meshes), ByPolygon or AllSame; "Direct" and "IndexToDirect"
+// reference modes are both supported. MLOD's FaceType is
 // only ever 3 or 4 (see docs/P3D Lod Faces.txt), so a polygon with more than
 // 4 vertices is split into triangles by ear clipping (triangulatePolygon). A
 // quad that would fold on the engine's corner 0 to corner 2 split diagonal
 // is emitted as two triangles split along corner 1 to corner 3 instead, the
-// way Blender draws it (quadFoldsOnEngineDiagonal).
-func decodeGeometry(g *fbxbinary.Node) (decodedGeometry, error) {
+// way Blender draws it (quadFoldsOnEngineDiagonal). Normals are converted
+// to MLOD under convention, once the faces are built, since
+// NormalConventionAuto needs them to detect the convention.
+func decodeGeometry(g *fbxbinary.Node, convention NormalConvention) (decodedGeometry, error) {
 	verticesNode := g.Child("Vertices")
 	if verticesNode == nil || len(verticesNode.Props) == 0 {
 		return decodedGeometry{}, fmt.Errorf("missing Vertices")
@@ -223,7 +235,7 @@ func decodeGeometry(g *fbxbinary.Node) (decodedGeometry, error) {
 	var faces []model.Face
 	bestEffortPolygons := 0
 	occurrence := 0
-	for _, poly := range polygons {
+	for polygonIndex, poly := range polygons {
 		n := len(poly)
 		if n < 3 {
 			return decodedGeometry{}, fmt.Errorf("polygon with %d vertices is unsupported (need at least 3)", n)
@@ -240,16 +252,16 @@ func decodeGeometry(g *fbxbinary.Node) (decodedGeometry, error) {
 			indices[i] = uint32(pointIdx)
 			corners[i] = vertices[pointIdx]
 
-			normal, err := normalSrc.at(occurrence)
+			corner := layerCorner{occurrence: occurrence, controlPoint: int(pointIdx), polygon: polygonIndex}
+			normal, err := normalSrc.at(corner)
 			if err != nil {
 				return decodedGeometry{}, fmt.Errorf("normal lookup: %w", err)
 			}
-			normal.Z = -normal.Z // invert internal/fbxexport/build.go's export-side Z negation
 			normals = append(normals, normal)
 			normalIndices[i] = uint32(len(normals) - 1)
 
 			if uvSrc != nil {
-				uv, err := uvSrc.at(occurrence)
+				uv, err := uvSrc.at(corner)
 				if err != nil {
 					return decodedGeometry{}, fmt.Errorf("UV lookup: %w", err)
 				}
@@ -308,11 +320,19 @@ func decodeGeometry(g *fbxbinary.Node) (decodedGeometry, error) {
 		}
 	}
 
+	if convention == NormalConventionAuto {
+		convention = detectNormalConvention(vertices, faces, normals)
+	}
+	for i, raw := range normals {
+		normals[i] = convention.toMLOD(raw)
+	}
+
 	return decodedGeometry{
 		vertices:           vertices,
 		normals:            normals,
 		faces:              faces,
 		bestEffortPolygons: bestEffortPolygons,
+		normalConvention:   convention,
 	}, nil
 }
 
@@ -366,26 +386,82 @@ func firstUVLayer(g *fbxbinary.Node) *fbxbinary.Node {
 	return nil
 }
 
-// vec3Layer resolves a ByPolygonVertex Normals-shaped layer element (Direct
-// or IndexToDirect) to a Vector3 per polygon-vertex occurrence.
-type vec3Layer struct {
-	direct []float64
-	index  []int32 // nil unless ReferenceInformationType == "IndexToDirect"
+// layerCorner identifies one polygon corner for a layer element lookup. Which
+// field a layer reads depends on its MappingInformationType.
+type layerCorner struct {
+	occurrence   int // position in PolygonVertexIndex, for ByPolygonVertex
+	controlPoint int // index into Vertices, for ByVertice
+	polygon      int // polygon number, for ByPolygon
 }
 
-func newVec3Layer(layer *fbxbinary.Node, directChildName string) (*vec3Layer, error) {
+// layerMapping is the MappingInformationType/ReferenceInformationType pair
+// shared by every layer element shape. It turns a polygon corner into an
+// element index in the layer's direct array.
+type layerMapping struct {
+	mapping string
+	index   []int32 // nil unless ReferenceInformationType == "IndexToDirect"
+}
+
+func newLayerMapping(layer *fbxbinary.Node, directChildName string) (layerMapping, error) {
 	mapping, err := childString(layer, "MappingInformationType")
 	if err != nil {
-		return nil, err
+		return layerMapping{}, err
 	}
-	if mapping != "ByPolygonVertex" {
-		return nil, fmt.Errorf("unsupported MappingInformationType %q (only ByPolygonVertex is supported)", mapping)
+	switch mapping {
+	case "ByPolygonVertex", "ByVertice", "ByVertex", "ByControlPoint", "ByPolygon", "AllSame":
+	default:
+		return layerMapping{}, fmt.Errorf("unsupported MappingInformationType %q", mapping)
 	}
 	ref, err := childString(layer, "ReferenceInformationType")
 	if err != nil {
-		return nil, err
+		return layerMapping{}, err
 	}
 
+	m := layerMapping{mapping: mapping}
+	switch ref {
+	case "Direct":
+	case "IndexToDirect":
+		idxNode := layer.Child(directChildName + "Index")
+		if idxNode == nil || len(idxNode.Props) == 0 {
+			return layerMapping{}, fmt.Errorf("missing %sIndex for IndexToDirect reference", directChildName)
+		}
+		idx, ok := idxNode.Props[0].([]int32)
+		if !ok {
+			return layerMapping{}, fmt.Errorf("malformed %sIndex array", directChildName)
+		}
+		m.index = idx
+	default:
+		return layerMapping{}, fmt.Errorf("unsupported ReferenceInformationType %q", ref)
+	}
+	return m, nil
+}
+
+// elementIndex returns the direct array element that corner reads. The
+// ByVertice/ByVertex/ByControlPoint spellings all mean one element per
+// control point.
+func (m layerMapping) elementIndex(corner layerCorner) (int, error) {
+	var key int
+	switch m.mapping {
+	case "ByPolygonVertex":
+		key = corner.occurrence
+	case "ByVertice", "ByVertex", "ByControlPoint":
+		key = corner.controlPoint
+	case "ByPolygon":
+		key = corner.polygon
+	case "AllSame":
+		key = 0
+	}
+	if m.index == nil {
+		return key, nil
+	}
+	if key >= len(m.index) {
+		return 0, fmt.Errorf("%s key %d out of range (%d indices)", m.mapping, key, len(m.index))
+	}
+	return int(m.index[key]), nil
+}
+
+// directArray reads a layer's float64 direct array child.
+func directArray(layer *fbxbinary.Node, directChildName string) ([]float64, error) {
 	directNode := layer.Child(directChildName)
 	if directNode == nil || len(directNode.Props) == 0 {
 		return nil, fmt.Errorf("missing %s", directChildName)
@@ -394,33 +470,32 @@ func newVec3Layer(layer *fbxbinary.Node, directChildName string) (*vec3Layer, er
 	if !ok {
 		return nil, fmt.Errorf("malformed %s array", directChildName)
 	}
-
-	l := &vec3Layer{direct: direct}
-	switch ref {
-	case "Direct":
-	case "IndexToDirect":
-		idxNode := layer.Child(directChildName + "Index")
-		if idxNode == nil || len(idxNode.Props) == 0 {
-			return nil, fmt.Errorf("missing %sIndex for IndexToDirect reference", directChildName)
-		}
-		idx, ok := idxNode.Props[0].([]int32)
-		if !ok {
-			return nil, fmt.Errorf("malformed %sIndex array", directChildName)
-		}
-		l.index = idx
-	default:
-		return nil, fmt.Errorf("unsupported ReferenceInformationType %q", ref)
-	}
-	return l, nil
+	return direct, nil
 }
 
-func (l *vec3Layer) at(occurrence int) (model.Vector3, error) {
-	i := occurrence
-	if l.index != nil {
-		if occurrence >= len(l.index) {
-			return model.Vector3{}, fmt.Errorf("occurrence %d out of range (%d indices)", occurrence, len(l.index))
-		}
-		i = int(l.index[occurrence])
+// vec3Layer resolves a Normals-shaped layer element to a Vector3 per polygon
+// corner.
+type vec3Layer struct {
+	mapping layerMapping
+	direct  []float64
+}
+
+func newVec3Layer(layer *fbxbinary.Node, directChildName string) (*vec3Layer, error) {
+	mapping, err := newLayerMapping(layer, directChildName)
+	if err != nil {
+		return nil, err
+	}
+	direct, err := directArray(layer, directChildName)
+	if err != nil {
+		return nil, err
+	}
+	return &vec3Layer{mapping: mapping, direct: direct}, nil
+}
+
+func (l *vec3Layer) at(corner layerCorner) (model.Vector3, error) {
+	i, err := l.mapping.elementIndex(corner)
+	if err != nil {
+		return model.Vector3{}, err
 	}
 	if i*3+2 >= len(l.direct) || i < 0 {
 		return model.Vector3{}, fmt.Errorf("direct index %d out of range (%d values)", i, len(l.direct))
@@ -434,58 +509,26 @@ func (l *vec3Layer) at(occurrence int) (model.Vector3, error) {
 
 // vec2Layer is vec3Layer's UV-shaped (2-component) counterpart.
 type vec2Layer struct {
-	direct []float64
-	index  []int32
+	mapping layerMapping
+	direct  []float64
 }
 
 func newVec2Layer(layer *fbxbinary.Node, directChildName string) (*vec2Layer, error) {
-	mapping, err := childString(layer, "MappingInformationType")
+	mapping, err := newLayerMapping(layer, directChildName)
 	if err != nil {
 		return nil, err
 	}
-	if mapping != "ByPolygonVertex" {
-		return nil, fmt.Errorf("unsupported MappingInformationType %q (only ByPolygonVertex is supported)", mapping)
-	}
-	ref, err := childString(layer, "ReferenceInformationType")
+	direct, err := directArray(layer, directChildName)
 	if err != nil {
 		return nil, err
 	}
-
-	directNode := layer.Child(directChildName)
-	if directNode == nil || len(directNode.Props) == 0 {
-		return nil, fmt.Errorf("missing %s", directChildName)
-	}
-	direct, ok := directNode.Props[0].([]float64)
-	if !ok {
-		return nil, fmt.Errorf("malformed %s array", directChildName)
-	}
-
-	l := &vec2Layer{direct: direct}
-	switch ref {
-	case "Direct":
-	case "IndexToDirect":
-		idxNode := layer.Child(directChildName + "Index")
-		if idxNode == nil || len(idxNode.Props) == 0 {
-			return nil, fmt.Errorf("missing %sIndex for IndexToDirect reference", directChildName)
-		}
-		idx, ok := idxNode.Props[0].([]int32)
-		if !ok {
-			return nil, fmt.Errorf("malformed %sIndex array", directChildName)
-		}
-		l.index = idx
-	default:
-		return nil, fmt.Errorf("unsupported ReferenceInformationType %q", ref)
-	}
-	return l, nil
+	return &vec2Layer{mapping: mapping, direct: direct}, nil
 }
 
-func (l *vec2Layer) at(occurrence int) (model.UV, error) {
-	i := occurrence
-	if l.index != nil {
-		if occurrence >= len(l.index) {
-			return model.UV{}, fmt.Errorf("occurrence %d out of range (%d indices)", occurrence, len(l.index))
-		}
-		i = int(l.index[occurrence])
+func (l *vec2Layer) at(corner layerCorner) (model.UV, error) {
+	i, err := l.mapping.elementIndex(corner)
+	if err != nil {
+		return model.UV{}, err
 	}
 	if i*2+1 >= len(l.direct) || i < 0 {
 		return model.UV{}, fmt.Errorf("direct index %d out of range (%d values)", i, len(l.direct))

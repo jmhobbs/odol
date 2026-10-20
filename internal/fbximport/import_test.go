@@ -87,7 +87,7 @@ func TestImportRoundTripsSyntheticTriangle(t *testing.T) {
 	data, err := fbxexport.Marshal(want)
 	require.NoError(t, err)
 
-	mesh, err := Import(data)
+	mesh, err := Import(data, NormalConventionDayZ)
 	require.NoError(t, err)
 
 	wantLOD := want.LODs[0]
@@ -169,7 +169,7 @@ func TestImportMergesDisconnectedComponents(t *testing.T) {
 	data, err := fbxexport.Marshal(m)
 	require.NoError(t, err)
 
-	mesh, err := Import(data)
+	mesh, err := Import(data, NormalConventionDayZ)
 	require.NoError(t, err)
 
 	assert.Len(t, mesh.Vertices, 6, "both disconnected parts' vertices must be merged")
@@ -274,7 +274,7 @@ func triangleGeometryNode() *fbxbinary.Node {
 // face" bug, invisible to a per-corner UV value check since each corner's
 // own UV stays individually correct).
 func TestDecodeGeometryQuadWindingMatchesDocumentedPermutation(t *testing.T) {
-	geometry, err := decodeGeometry(quadGeometryNode())
+	geometry, err := decodeGeometry(quadGeometryNode(), NormalConventionDayZ)
 	require.NoError(t, err)
 	faces := geometry.faces
 	require.Len(t, faces, 1)
@@ -292,7 +292,7 @@ func TestDecodeGeometryQuadWindingMatchesDocumentedPermutation(t *testing.T) {
 // full reversal - there's no diagonal ambiguity for a 3-vertex polygon, but
 // this pins the exact index order down regardless.
 func TestDecodeGeometryTriangleWindingMatchesDocumentedPermutation(t *testing.T) {
-	geometry, err := decodeGeometry(triangleGeometryNode())
+	geometry, err := decodeGeometry(triangleGeometryNode(), NormalConventionDayZ)
 	require.NoError(t, err)
 	faces := geometry.faces
 	require.Len(t, faces, 1)
@@ -309,7 +309,7 @@ func TestDecodeGeometryTriangleWindingMatchesDocumentedPermutation(t *testing.T)
 func TestDecodeGeometryFlipsV(t *testing.T) {
 	corners := []model.Vector3{{X: 0, Y: 0, Z: 0}, {X: 1, Y: 0, Z: 0}, {X: 0, Y: 1, Z: 0}}
 	fbxUVs := []model.UV{{U: 0.25, V: 0.1}, {U: 0.25, V: 0.1}, {U: 0.25, V: 0.1}}
-	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, fbxUVs))
+	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, fbxUVs), NormalConventionDayZ)
 	require.NoError(t, err)
 	require.Len(t, geometry.faces, 1)
 
@@ -332,7 +332,7 @@ func TestImportRoundTripKeepsUVsExact(t *testing.T) {
 	data, err := fbxexport.Marshal(want)
 	require.NoError(t, err)
 
-	mesh, err := Import(data)
+	mesh, err := Import(data, NormalConventionDayZ)
 	require.NoError(t, err)
 	require.Len(t, mesh.Faces, 1)
 
@@ -377,7 +377,7 @@ func TestDecodeGeometryFanTriangulatesLargerPolygons(t *testing.T) {
 		},
 	}
 
-	geometry, err := decodeGeometry(g)
+	geometry, err := decodeGeometry(g, NormalConventionDayZ)
 	require.NoError(t, err)
 	normals, faces := geometry.normals, geometry.faces
 
@@ -471,7 +471,7 @@ func distinctCornerUVs(count int) []model.UV {
 // vertex index.
 func TestDecodeGeometryTriangulatesConcavePolygon(t *testing.T) {
 	corners := uShapeCorners()
-	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, distinctCornerUVs(len(corners))))
+	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, distinctCornerUVs(len(corners))), NormalConventionDayZ)
 	require.NoError(t, err)
 	assert.Zero(t, geometry.bestEffortPolygons)
 	assert.Len(t, geometry.normals, len(corners), "one pooled normal per polygon occurrence")
@@ -499,7 +499,7 @@ func TestDecodeGeometryTriangulatesConcavePolygon(t *testing.T) {
 
 func TestDecodeGeometrySplitsQuadThatFoldsOnEngineDiagonal(t *testing.T) {
 	corners := dartQuadCorners()
-	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, distinctCornerUVs(len(corners))))
+	geometry, err := decodeGeometry(singlePolygonGeometryNode(corners, distinctCornerUVs(len(corners))), NormalConventionDayZ)
 	require.NoError(t, err)
 
 	// Blender's 1-3 split, triangles (0,1,3) and (1,2,3), each reordered by
@@ -518,7 +518,7 @@ func TestDecodeGeometrySplitsQuadThatFoldsOnEngineDiagonal(t *testing.T) {
 
 func TestDecodeGeometryCountsBestEffortPolygons(t *testing.T) {
 	collinear := []model.Vector3{{X: 0}, {X: 1}, {X: 2}, {X: 3}, {X: 4}}
-	geometry, err := decodeGeometry(singlePolygonGeometryNode(collinear, distinctCornerUVs(len(collinear))))
+	geometry, err := decodeGeometry(singlePolygonGeometryNode(collinear, distinctCornerUVs(len(collinear))), NormalConventionDayZ)
 	require.NoError(t, err)
 
 	assert.Len(t, geometry.faces, 3)
@@ -544,7 +544,7 @@ func TestDecodeGeometryRejectsDegeneratePolygons(t *testing.T) {
 		},
 	}
 
-	_, err := decodeGeometry(g)
+	_, err := decodeGeometry(g, NormalConventionDayZ)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported")
 }
@@ -558,4 +558,227 @@ func TestDecodeEulerTransformAppliesRotationTranslationScale(t *testing.T) {
 	got := xf.applyPoint(model.Vector3{X: 1, Y: 0, Z: 0})
 	// scale X by 2 -> (2,0,0); rotate 90 deg about Z -> (0,2,0); translate +5 X -> (5,2,0)
 	approxVec3(t, model.Vector3{X: 5, Y: 2, Z: 0}, got, 1e-4, "rotated+scaled+translated point")
+}
+
+// twoTriangleGeometry builds a square split into two triangles that share
+// points 0 and 2 (4 points, 6 polygon-vertex occurrences), with the given
+// LayerElementNormal children.
+func twoTriangleGeometry(normalLayerChildren []*fbxbinary.Node) *fbxbinary.Node {
+	return &fbxbinary.Node{
+		Name:  "Geometry",
+		Props: []any{int64(1), "Geometry::square", "Mesh"},
+		Children: []*fbxbinary.Node{
+			{Name: "Vertices", Props: []any{[]float64{0, 0, 0, 100, 0, 0, 100, 100, 0, 0, 100, 0}}},
+			{Name: "PolygonVertexIndex", Props: []any{[]int32{0, 1, ^int32(2), 0, 2, ^int32(3)}}},
+			{Name: "LayerElementNormal", Props: []any{int32(0)}, Children: normalLayerChildren},
+		},
+	}
+}
+
+// pointNormal is a distinct normal per control point. Its Z is non-zero so
+// the import-side Z negation is checked too.
+func pointNormal(point int) model.Vector3 {
+	return model.Vector3{X: float32(point + 1), Y: 0, Z: float32(point+1) * 10}
+}
+
+func TestDecodeGeometryResolvesByVerticeNormals(t *testing.T) {
+	var directNormals, reversedNormals []float64
+	for point := 0; point < 4; point++ {
+		n := pointNormal(point)
+		directNormals = append(directNormals, float64(n.X), float64(n.Y), float64(n.Z))
+		r := pointNormal(3 - point)
+		reversedNormals = append(reversedNormals, float64(r.X), float64(r.Y), float64(r.Z))
+	}
+
+	tests := []struct {
+		name     string
+		children []*fbxbinary.Node
+	}{
+		{
+			name: "Direct",
+			children: []*fbxbinary.Node{
+				{Name: "MappingInformationType", Props: []any{"ByVertice"}},
+				{Name: "ReferenceInformationType", Props: []any{"Direct"}},
+				{Name: "Normals", Props: []any{directNormals}},
+			},
+		},
+		{
+			name: "IndexToDirect",
+			children: []*fbxbinary.Node{
+				{Name: "MappingInformationType", Props: []any{"ByVertice"}},
+				{Name: "ReferenceInformationType", Props: []any{"IndexToDirect"}},
+				{Name: "Normals", Props: []any{reversedNormals}},
+				{Name: "NormalsIndex", Props: []any{[]int32{3, 2, 1, 0}}},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			geometry, err := decodeGeometry(twoTriangleGeometry(tc.children), NormalConventionDayZ)
+			require.NoError(t, err)
+			require.Len(t, geometry.faces, 2)
+
+			for _, face := range geometry.faces {
+				for corner, point := range face.Indices {
+					want := pointNormal(int(point))
+					want.Z = -want.Z
+					assert.Equalf(t, want, geometry.normals[face.NormalIndices[corner]], "normal for point %d", point)
+				}
+			}
+		})
+	}
+}
+
+func TestDecodeGeometryResolvesPerPolygonAndAllSameNormals(t *testing.T) {
+	t.Run("ByPolygon", func(t *testing.T) {
+		geometry, err := decodeGeometry(twoTriangleGeometry([]*fbxbinary.Node{
+			{Name: "MappingInformationType", Props: []any{"ByPolygon"}},
+			{Name: "ReferenceInformationType", Props: []any{"Direct"}},
+			{Name: "Normals", Props: []any{[]float64{1, 0, 0, 0, 1, 0}}},
+		}), NormalConventionDayZ)
+		require.NoError(t, err)
+		require.Len(t, geometry.faces, 2)
+
+		wantByFace := []model.Vector3{{X: 1, Y: 0, Z: 0}, {X: 0, Y: 1, Z: 0}}
+		for faceIndex, face := range geometry.faces {
+			for _, normalIndex := range face.NormalIndices {
+				assert.Equalf(t, wantByFace[faceIndex], geometry.normals[normalIndex], "face %d", faceIndex)
+			}
+		}
+	})
+
+	t.Run("AllSame", func(t *testing.T) {
+		geometry, err := decodeGeometry(twoTriangleGeometry([]*fbxbinary.Node{
+			{Name: "MappingInformationType", Props: []any{"AllSame"}},
+			{Name: "ReferenceInformationType", Props: []any{"Direct"}},
+			{Name: "Normals", Props: []any{[]float64{0, 1, 0}}},
+		}), NormalConventionDayZ)
+		require.NoError(t, err)
+		require.Len(t, geometry.normals, 6)
+
+		for _, normal := range geometry.normals {
+			assert.Equal(t, model.Vector3{X: 0, Y: 1, Z: 0}, normal)
+		}
+	})
+}
+
+func TestDecodeGeometryRejectsUnknownMapping(t *testing.T) {
+	_, err := decodeGeometry(twoTriangleGeometry([]*fbxbinary.Node{
+		{Name: "MappingInformationType", Props: []any{"ByEdge"}},
+		{Name: "ReferenceInformationType", Props: []any{"Direct"}},
+		{Name: "Normals", Props: []any{make([]float64, 5*3)}},
+	}), NormalConventionDayZ)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unsupported MappingInformationType "ByEdge"`)
+}
+
+func TestParseNormalConvention(t *testing.T) {
+	for _, want := range []NormalConvention{NormalConventionAuto, NormalConventionDayZ, NormalConventionStandard} {
+		got, err := ParseNormalConvention(want.String())
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	}
+
+	_, err := ParseNormalConvention("blender")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auto, dayz, standard")
+}
+
+// cubeOutwardNormals lists the outward normal of each cubeGeometry face, in
+// polygon order.
+var cubeOutwardNormals = []model.Vector3{
+	{X: 0, Y: 0, Z: -1},
+	{X: 0, Y: 0, Z: 1},
+	{X: 0, Y: -1, Z: 0},
+	{X: 0, Y: 1, Z: 0},
+	{X: -1, Y: 0, Z: 0},
+	{X: 1, Y: 0, Z: 0},
+}
+
+// cubeGeometry builds a 100-unit cube of six quads, counter-clockwise from
+// outside as FBX expects, with one ByPolygon normal per face computed by
+// rawNormal from that face's outward normal.
+func cubeGeometry(rawNormal func(outward model.Vector3) model.Vector3) *fbxbinary.Node {
+	var vertices []float64
+	for point := 0; point < 8; point++ {
+		vertices = append(vertices, float64(point&1)*100, float64(point>>1&1)*100, float64(point>>2&1)*100)
+	}
+	quads := [][4]int32{{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}}
+	var polygonVertexIndex []int32
+	var normals []float64
+	for face, quad := range quads {
+		polygonVertexIndex = append(polygonVertexIndex, quad[0], quad[1], quad[2], ^quad[3])
+		n := rawNormal(cubeOutwardNormals[face])
+		normals = append(normals, float64(n.X), float64(n.Y), float64(n.Z))
+	}
+	return &fbxbinary.Node{
+		Name:  "Geometry",
+		Props: []any{int64(1), "Geometry::cube", "Mesh"},
+		Children: []*fbxbinary.Node{
+			{Name: "Vertices", Props: []any{vertices}},
+			{Name: "PolygonVertexIndex", Props: []any{polygonVertexIndex}},
+			{
+				Name:  "LayerElementNormal",
+				Props: []any{int32(0)},
+				Children: []*fbxbinary.Node{
+					{Name: "MappingInformationType", Props: []any{"ByPolygon"}},
+					{Name: "ReferenceInformationType", Props: []any{"Direct"}},
+					{Name: "Normals", Props: []any{normals}},
+				},
+			},
+		},
+	}
+}
+
+// standardFBXNormal is how Blender writes a face's normal: outward, agreeing
+// with the counter-clockwise winding.
+func standardFBXNormal(outward model.Vector3) model.Vector3 { return outward }
+
+// dayzFBXNormal is how DayZ tools write a face's normal: the inward MLOD
+// normal with Z mirrored.
+func dayzFBXNormal(outward model.Vector3) model.Vector3 {
+	return model.Vector3{X: -outward.X, Y: -outward.Y, Z: outward.Z}
+}
+
+func TestDecodeGeometryAutoDetectsNormalConvention(t *testing.T) {
+	tests := []struct {
+		name      string
+		rawNormal func(outward model.Vector3) model.Vector3
+		want      NormalConvention
+	}{
+		{name: "standard", rawNormal: standardFBXNormal, want: NormalConventionStandard},
+		{name: "dayz", rawNormal: dayzFBXNormal, want: NormalConventionDayZ},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			geometry, err := decodeGeometry(cubeGeometry(tc.rawNormal), NormalConventionAuto)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, geometry.normalConvention)
+
+			// MLOD normals point along the right-hand normal of the
+			// clockwise (MLOD-order) face, the way every sample P3D does.
+			for faceIndex, face := range geometry.faces {
+				rightHand := faceNormal(geometry.vertices[face.Indices[0]], geometry.vertices[face.Indices[1]], geometry.vertices[face.Indices[2]])
+				for _, normalIndex := range face.NormalIndices {
+					n := geometry.normals[normalIndex]
+					assert.Positivef(t, rightHand.X*n.X+rightHand.Y*n.Y+rightHand.Z*n.Z, "face %d normal %v points against MLOD convention", faceIndex, n)
+				}
+			}
+		})
+	}
+}
+
+func TestDecodeGeometryExplicitNormalConventionOverridesDetection(t *testing.T) {
+	geometry, err := decodeGeometry(cubeGeometry(standardFBXNormal), NormalConventionDayZ)
+	require.NoError(t, err)
+	assert.Equal(t, NormalConventionDayZ, geometry.normalConvention)
+
+	require.Len(t, geometry.faces, len(cubeOutwardNormals))
+	for faceIndex, face := range geometry.faces {
+		outward := cubeOutwardNormals[faceIndex]
+		want := model.Vector3{X: outward.X, Y: outward.Y, Z: -outward.Z}
+		for _, normalIndex := range face.NormalIndices {
+			assert.Equalf(t, want, geometry.normals[normalIndex], "face %d", faceIndex)
+		}
+	}
 }
