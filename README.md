@@ -8,9 +8,11 @@ It now includes inspection tools and can build an MLOD P3D from FBX files.
 
 ## Usage
 
+The easiest way to use these tools is in your browser. A version of each tool is available at [tools.dzhosts.com](https://tools.dzhosts.com/).  If you'd like the tools locally, you can build them from source or get the latest release from [GitHub](https://github.com/jmhobbs/p3d-tools/releases)
+
 ### Web
 
-The conversion and FBX-to-P3D tools are available in your browser at [tools.dzhosts.com](https://tools.dzhosts.com/p3d-converter/). This is the easiest way to use it, and it should work on any platform.
+ODOL -> MLOD conversion is available at [tools.dzhosts.com/p3d-converter](https://tools.dzhosts.com/p3d-converter/).
 
 ![The web browser version of the p3d converter](.github/readme/web.png)
 
@@ -20,11 +22,11 @@ Building a P3D from FBX files is available at [tools.dzhosts.com/fbx-to-p3d](htt
 
 ### CLI
 
-If you'd like the tools locally, you can build them from source or get the latest release from [GitHub](https://github.com/jmhobbs/odol/releases)
-
 #### odol-convert
 
-`odol-convert` takes an input P3D file and emits an MLOD version and a model.cfg file to match.  Optionally, you can export the highest resolution LOD to FBX.
+To get an MLOD version and model.cfg file, the simplest way to use `odol-convert` is to drag and drop a P3D file onto the executable.  It will create an `<name>_mlod.p3d` version and a `<name>.model.cfg` file in the same directory as the source file.  It works with multiple files in a batch as well.
+
+For more options (i.e FBX output), you can run it on the command line. `odol-convert` takes an input P3D file and emits an MLOD version and a model.cfg file to match.  Optionally, you can export the highest resolution LOD to FBX.
 
 ```
 $ odol-convert
@@ -65,7 +67,7 @@ $ ls -lart
 
 #### fbx2p3d
 
-`fbx2p3d` builds an MLOD P3D from binary FBX files, one file per resolution LOD. Pass each one as `--lod <resolution>=<path.fbx>`, and repeat the flag to add more LODs. Every resolution LOD gets a `camoground` named selection, and the tool generates Geometry, View Geometry, Fire Geometry and Memory LODs to fit the model.
+The  `fbx2p3d` command builds an MLOD P3D from binary FBX files, one file per resolution LOD. Pass each one as `--lod <resolution>=<path.fbx>`, and repeat the flag to add more LODs. Every resolution LOD gets a `camoground` named selection, and the tool generates Geometry, View Geometry, Fire Geometry and Memory LODs to fit the model.
 
 Before it builds the P3D, it prints the model's size next to a reference human height and asks you to confirm it. If the model is the wrong size because of a unit mismatch in the FBX, run it again with `--scale`. Pass `-y` to skip the prompt.
 
@@ -115,6 +117,78 @@ fbx2p3d: preview: height 0.1226m is 0.07x the reference human height (1.7976m, m
 fbx2p3d: building auxiliary LODs (Geometry, View Geometry, Fire Geometry, Memory)
 fbx2p3d: writing sodacan.p3d
 fbx2p3d: conversion complete
+```
+
+### p3dinspect
+
+The `p3dinspect` command dumps information about a P3D file, optionally in JSON format.  This is great for a quick property check, and LLM's can leverage it easily as well.
+
+
+```
+$ p3dinspect --help
+usage: p3dinspect [--json] <input.p3d>
+  -json
+        output the summary as JSON instead of text
+```
+
+```
+$ p3dinspect shield_bug_mlod.p3d
+Model: shield_bug_mlod
+Format: MLOD/P3DM (source MLOD v257)
+Center of mass: (0, 0, 0)
+
+LODs (6):
+  [0] Graphical LOD (resolution 1)
+      vertices: 918, faces: 1314, uv sets: 0
+      bounding size (X,Y,Z): 10.2830m x 6.1072m x 13.2215m
+      textures: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug_co.paa
+      materials: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug.rvmat
+      named selections:
+        #Selected# (vertex, 918 vertices, 1314 faces)
+        camoground (vertex, 918 vertices, 1314 faces)
+  [1] Graphical LOD (resolution 2)
+      vertices: 466, faces: 802, uv sets: 0
+      bounding size (X,Y,Z): 10.2830m x 6.0706m x 13.2877m
+      textures: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug_co.paa
+      materials: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug.rvmat
+      named selections:
+        #Selected# (vertex, 466 vertices, 802 faces)
+        camoground (vertex, 466 vertices, 802 faces)
+  [2] Graphical LOD (resolution 3)
+      vertices: 239, faces: 422, uv sets: 0
+      bounding size (X,Y,Z): 10.1462m x 5.9977m x 13.1823m
+      textures: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug_co.paa
+      materials: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug.rvmat
+      named selections:
+        #Selected# (vertex, 239 vertices, 422 faces)
+        camoground (vertex, 239 vertices, 422 faces)
+  [3] Graphical LOD (resolution 4)
+      vertices: 126, faces: 220, uv sets: 0
+      bounding size (X,Y,Z): 10.1068m x 5.8936m x 13.1300m
+      textures: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug_co.paa
+      materials: WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug.rvmat
+      named selections:
+        #Selected# (vertex, 126 vertices, 220 faces)
+        camoground (vertex, 126 vertices, 220 faces)
+  [4] Geometry (resolution 1e+13)
+      vertices: 8, faces: 6, uv sets: 0
+      named selections:
+        #SharpEdges# (vertex, 1 vertices, 1 faces)
+        #Selected# (vertex, 8 vertices, 6 faces)
+        Component01 (vertex, 8 vertices, 6 faces)
+  [5] Fire Geometry (resolution 7e+15)
+      vertices: 8, faces: 6, uv sets: 0
+      materials: dz\data\data\penetration\foliage_green.rvmat
+      named selections:
+        #SharpEdges# (vertex, 1 vertices, 1 faces)
+        Component01 (vertex, 8 vertices, 6 faces)
+
+Textures referenced (1):
+  WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug_co.paa
+
+Materials referenced (2):
+  WILDLANDZ_Halloween_Props\props\bugs\data\shield_bug.rvmat
+  dz\data\data\penetration\foliage_green.rvmat
 ```
 
 ## Contributing
