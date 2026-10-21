@@ -1,5 +1,5 @@
 // Package convert holds the byte-oriented P3D -> MLOD/FBX conversion rules
-// shared by the CLI (cmd/convert) and the browser/WASM entry point
+// shared by the CLI (cmd/odol-convert) and the browser/WASM entry point
 // (cmd/wasm), so both have exactly one place that knows the conversion
 // rules (which input formats are accepted, when a partial decode must be
 // rejected, and which internal packages to call).

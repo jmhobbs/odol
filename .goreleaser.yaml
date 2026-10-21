@@ -8,7 +8,7 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./cmd/convert/
+  - main: ./cmd/odol-convert/
     id: odol-convert
     binary: odol-convert
     env:
