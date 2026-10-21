@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
@@ -11,34 +12,68 @@ import (
 	"github.com/jmhobbs/odol/internal/convert"
 )
 
-func main() {
-	fbx := flag.Bool("fbx", false, "export FBX instead of MLOD")
-	fbxASCII := flag.Bool("fbx-ascii", false, "export ASCII FBX instead of binary (implies --fbx)")
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [--fbx] [--fbx-ascii] <input.p3d>\n", os.Args[0])
-		flag.PrintDefaults()
-	}
-	flag.Parse()
+const pausePrompt = "Press Enter to close this window...\n"
 
-	args := flag.Args()
-	if len(args) != 1 {
-		flag.Usage()
-		os.Exit(2)
+type cliOptions struct {
+	stdin  io.Reader
+	stderr io.Writer
+	// pauseOnExit waits for Enter before returning, so a console window
+	// opened by a drag and drop in Explorer stays open long enough to read.
+	pauseOnExit bool
+}
+
+func main() {
+	os.Exit(runCLI(os.Args[1:], cliOptions{
+		stdin:       os.Stdin,
+		stderr:      os.Stderr,
+		pauseOnExit: consoleClosesOnExit(),
+	}))
+}
+
+func runCLI(args []string, options cliOptions) int {
+	if options.pauseOnExit {
+		defer waitForEnter(options.stdin, options.stderr)
+	}
+
+	flags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ContinueOnError)
+	flags.SetOutput(options.stderr)
+	fbx := flags.Bool("fbx", false, "export FBX instead of MLOD")
+	fbxASCII := flags.Bool("fbx-ascii", false, "export ASCII FBX instead of binary (implies --fbx)")
+	flags.Usage = func() {
+		_, _ = fmt.Fprintf(options.stderr, "usage: %s [--fbx] [--fbx-ascii] <input.p3d> [<input.p3d> ...]\n", flags.Name())
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	inputPaths := flags.Args()
+	if len(inputPaths) == 0 {
+		flags.Usage()
+		return 2
 	}
 
 	useFBX, useASCII := resolveFBXMode(*fbx, *fbxASCII)
 
-	var err error
-	if useFBX {
-		err = runFBX(args[0], useASCII, os.Stderr)
-	} else {
-		err = run(args[0], os.Stderr)
+	exitCode := 0
+	for _, inputPath := range inputPaths {
+		var err error
+		if useFBX {
+			err = runFBX(inputPath, useASCII, options.stderr)
+		} else {
+			err = run(inputPath, options.stderr)
+		}
+		if err != nil {
+			_, _ = fmt.Fprintf(options.stderr, "convert: %s: %v\n", inputPath, err)
+			exitCode = 1
+		}
 	}
+	return exitCode
+}
 
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+func waitForEnter(stdin io.Reader, stderr io.Writer) {
+	_, _ = fmt.Fprint(stderr, pausePrompt)
+	_, _ = bufio.NewReader(stdin).ReadString('\n')
 }
 
 // resolveFBXMode applies the "--fbx-ascii implies --fbx" rule.
