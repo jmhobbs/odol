@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 func minimalModel() *model.Model {

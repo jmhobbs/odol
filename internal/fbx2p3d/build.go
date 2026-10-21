@@ -11,7 +11,7 @@ import (
 
 	"github.com/jmhobbs/odol/internal/fbximport"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // ReferenceHumanHeightMeters is the Y-axis (up) extent of LOD 0 (the

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 var cfgTemplate = template.Must(template.New("model.cfg").Funcs(template.FuncMap{

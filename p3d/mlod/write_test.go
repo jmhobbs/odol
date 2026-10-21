@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jmhobbs/odol/internal/detector"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/detector"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 func TestMarshalProducesMLOD(t *testing.T) {

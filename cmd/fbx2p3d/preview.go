@@ -11,7 +11,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/jmhobbs/odol/internal/fbx2p3d"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // errCancelled is returned by confirmContinue, and therefore by any

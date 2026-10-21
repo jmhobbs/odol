@@ -1,4 +1,4 @@
-package inspect
+package lodname
 
 import (
 	"math"
@@ -11,7 +11,7 @@ func fromBits(bits uint32) float32 {
 	return math.Float32frombits(bits)
 }
 
-func TestResolutionName(t *testing.T) {
+func TestName(t *testing.T) {
 	tests := []struct {
 		name       string
 		resolution float32
@@ -54,7 +54,7 @@ func TestResolutionName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, ResolutionName(tt.resolution))
+			assert.Equal(t, tt.want, Name(tt.resolution))
 		})
 	}
 }

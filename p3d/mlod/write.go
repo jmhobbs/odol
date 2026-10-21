@@ -9,7 +9,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 const (

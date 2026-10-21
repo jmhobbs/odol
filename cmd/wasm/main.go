@@ -18,9 +18,9 @@ import (
 	"syscall/js"
 
 	"github.com/jmhobbs/odol/internal/convert"
-	"github.com/jmhobbs/odol/internal/detector"
 	"github.com/jmhobbs/odol/internal/fbx2p3d"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
+	"github.com/jmhobbs/odol/p3d/detector"
 )
 
 func main() {

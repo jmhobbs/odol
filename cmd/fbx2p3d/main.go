@@ -17,8 +17,8 @@ import (
 
 	"github.com/jmhobbs/odol/internal/fbx2p3d"
 	"github.com/jmhobbs/odol/internal/fbximport"
-	"github.com/jmhobbs/odol/internal/mlod"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
+	"github.com/jmhobbs/odol/p3d/mlod"
 )
 
 func main() {

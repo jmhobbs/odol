@@ -3,7 +3,7 @@ package fbximport
 import (
 	"math"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // point2D is a polygon corner projected onto the polygon's plane.

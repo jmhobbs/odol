@@ -1,13 +1,17 @@
-package fbxexport
+// Package proxy finds the placeholder triangles P3D models use to mark where
+// proxied models go, strips them from a LOD, and recovers a proxy's transform
+// from its triangle.
+package proxy
 
 import (
 	"math"
 	"strings"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
-const proxySelectionPrefix = "proxy:"
+// SelectionPrefix starts the name of a named selection that marks a proxy.
+const SelectionPrefix = "proxy:"
 
 // Proxy triangles have a right angle with legs in a 1:2 ratio (1m x 2m when
 // unscaled, but sizes down to 0.02m x 0.04m appear in the samples). The
@@ -20,19 +24,20 @@ const (
 	proxyLegRatioTolerance      = 0.05
 )
 
-// stripProxySelections removes proxy placeholder selections (named
-// "proxy:...", see docs/P3D File Format - MLOD.txt) and the faces/vertices
-// they reference from lod, since that geometry is a leftover marker for the
-// proxy's local transform and is redundant with model.LOD.Proxies, which is
-// exported separately as Null nodes. Orphaned proxy triangles (see
-// orphanProxyFaces) are removed too. It returns a new LOD; lod is not
-// mutated. If lod has no proxy-prefixed selections and no orphaned proxy
-// triangles, lod is returned as-is.
-func stripProxySelections(lod model.LOD) model.LOD {
+// Strip removes proxy placeholder selections (named "proxy:...", see
+// docs/P3D File Format - MLOD.txt) and the faces/vertices they reference from
+// lod, since that geometry only marks the proxy's local transform. In ODOL
+// that transform is also in model.LOD.Proxies; in MLOD, TransformFromTriangle
+// recovers it from the triangle before stripping. Orphaned proxy triangles
+// (see orphanProxyFaces) are removed too. Per-vertex arrays (UV sets 1+,
+// point masses, tangents and bitangents) are remapped with the vertices. It
+// returns a new LOD; lod is not mutated. If lod has no proxy-prefixed
+// selections and no orphaned proxy triangles, lod is returned as-is.
+func Strip(lod model.LOD) model.LOD {
 	var keptSelections []model.Selection
 	removedFaces := make(map[uint32]struct{})
 	for _, sel := range lod.Selections {
-		if strings.HasPrefix(sel.Name, proxySelectionPrefix) {
+		if strings.HasPrefix(sel.Name, SelectionPrefix) {
 			for _, fi := range sel.FaceIndices {
 				removedFaces[fi] = struct{}{}
 			}
@@ -92,6 +97,8 @@ func stripProxySelections(lod model.LOD) model.LOD {
 	}
 
 	pointMasses := remapPointMasses(lod.PointMasses, vertexRemap, len(keptVertices))
+	tangents := remapPerVertexVectors(lod.Tangents, vertexRemap, len(keptVertices))
+	bitangents := remapPerVertexVectors(lod.Bitangents, vertexRemap, len(keptVertices))
 
 	selections := make([]model.Selection, 0, len(keptSelections))
 	for _, sel := range keptSelections {
@@ -103,6 +110,8 @@ func stripProxySelections(lod model.LOD) model.LOD {
 	out.Faces = keptFaces
 	out.UVSets = uvSets
 	out.PointMasses = pointMasses
+	out.Tangents = tangents
+	out.Bitangents = bitangents
 	out.Selections = selections
 	return out
 }
@@ -140,13 +149,40 @@ func orphanProxyFaces(lod model.LOD) []uint32 {
 // isProxyTriangle reports whether indices name a triangle in vertices with
 // a right angle whose legs are in a proxyLegRatio:1 ratio.
 func isProxyTriangle(vertices []model.Vector3, indices []uint32) bool {
+	_, _, _, ok := proxyTriangleLegs(vertices, indices)
+	return ok
+}
+
+// TransformFromTriangle recovers a proxy's transform from its placeholder
+// triangle, in the layout model.Proxy.Transform uses: rows 0-2 the X, Y and Z
+// axes, row 3 the position. The right-angle corner is the position, the long
+// leg points along +Y and the short leg along +Z; X is Y x Z. The axes are
+// unit length: the triangle's size is not a scale. This matches the
+// transforms ODOL stores for the same proxies (checked on m4a1 against its
+// MLOD source). ok is false when the triangle isn't proxy-shaped.
+func TransformFromTriangle(vertices []model.Vector3, indices []uint32) (transform [4]model.Vector3, ok bool) {
+	corner, long, short, ok := proxyTriangleLegs(vertices, indices)
+	if !ok {
+		return transform, false
+	}
+	y, z := normalize3(long), normalize3(short)
+	x := cross3(y, z)
+	for i, axis := range [][3]float64{x, y, z, corner} {
+		transform[i] = model.Vector3{X: float32(axis[0]), Y: float32(axis[1]), Z: float32(axis[2])}
+	}
+	return transform, true
+}
+
+// proxyTriangleLegs finds the right-angle corner of a proxy triangle and its
+// long and short legs, measured from that corner.
+func proxyTriangleLegs(vertices []model.Vector3, indices []uint32) (corner, long, short [3]float64, ok bool) {
 	if len(indices) != 3 {
-		return false
+		return corner, long, short, false
 	}
 	var corners [3][3]float64
 	for i, vi := range indices {
 		if int(vi) >= len(vertices) {
-			return false
+			return corner, long, short, false
 		}
 		v := vertices[vi]
 		corners[i] = [3]float64{float64(v.X), float64(v.Y), float64(v.Z)}
@@ -157,19 +193,34 @@ func isProxyTriangle(vertices []model.Vector3, indices []uint32) bool {
 		legB := subtract3(corners[(c+2)%3], corners[c])
 		lengthA, lengthB := math.Sqrt(dot3(legA, legA)), math.Sqrt(dot3(legB, legB))
 		if lengthA == 0 || lengthB == 0 {
-			return false
+			return corner, long, short, false
 		}
 		if math.Abs(dot3(legA, legB)/(lengthA*lengthB)) > proxyRightAngleCosTolerance {
 			continue
 		}
 		ratio := math.Max(lengthA, lengthB) / math.Min(lengthA, lengthB)
-		return math.Abs(ratio-proxyLegRatio) < proxyLegRatioTolerance
+		if math.Abs(ratio-proxyLegRatio) >= proxyLegRatioTolerance {
+			return corner, long, short, false
+		}
+		if lengthA < lengthB {
+			legA, legB = legB, legA
+		}
+		return corners[c], legA, legB, true
 	}
-	return false
+	return corner, long, short, false
 }
 
 func subtract3(a, b [3]float64) [3]float64 {
 	return [3]float64{a[0] - b[0], a[1] - b[1], a[2] - b[2]}
+}
+
+func cross3(a, b [3]float64) [3]float64 {
+	return [3]float64{a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]}
+}
+
+func normalize3(a [3]float64) [3]float64 {
+	length := math.Sqrt(dot3(a, a))
+	return [3]float64{a[0] / length, a[1] / length, a[2] / length}
 }
 
 func dot3(a, b [3]float64) float64 {
@@ -184,6 +235,19 @@ func remapPerVertexUVs(uvs []model.UV, vertexRemap map[uint32]uint32, keptCount 
 	for oldIdx, newIdx := range vertexRemap {
 		if int(oldIdx) < len(uvs) {
 			out[newIdx] = uvs[oldIdx]
+		}
+	}
+	return out
+}
+
+func remapPerVertexVectors(vectors []model.Vector3, vertexRemap map[uint32]uint32, keptCount int) []model.Vector3 {
+	if vectors == nil {
+		return nil
+	}
+	out := make([]model.Vector3, keptCount)
+	for oldIdx, newIdx := range vertexRemap {
+		if int(oldIdx) < len(vectors) {
+			out[newIdx] = vectors[oldIdx]
 		}
 	}
 	return out

@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jmhobbs/odol/internal/mlod"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/mlod"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 func sampleGraphicalLOD(resolution float32, offset float32) GraphicalLOD {

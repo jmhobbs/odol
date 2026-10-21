@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jmhobbs/odol/internal/mlodbuild"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 func TestTriangulateForWebGLReversesWindingAndFansQuads(t *testing.T) {

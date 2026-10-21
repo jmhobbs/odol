@@ -3,8 +3,8 @@ package fbx2p3d
 import (
 	"fmt"
 
-	"github.com/jmhobbs/odol/internal/mlod"
 	"github.com/jmhobbs/odol/internal/mlodbuild"
+	"github.com/jmhobbs/odol/p3d/mlod"
 )
 
 // ConvertRequest is everything the browser page collects for one build.

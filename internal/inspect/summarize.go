@@ -3,8 +3,9 @@ package inspect
 import (
 	"sort"
 
-	"github.com/jmhobbs/odol/internal/detector"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/detector"
+	"github.com/jmhobbs/odol/p3d/lodname"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // partialParseProperty is the LOD property internal/odol sets when a LOD
@@ -35,7 +36,7 @@ type LODSummary struct {
 	// BoundingSize is the (width, height, depth) extent, in meters, of this
 	// LOD's vertices - the same bounding box cmd/fbx2mlod's conversion
 	// confirmation prompt reports. Only measured for graphical LODs (see
-	// IsGraphicalResolution); nil for functional/shadow/geometry/memory
+	// lodname.IsGraphical); nil for functional/shadow/geometry/memory
 	// LODs, where a bounding box isn't a meaningful measurement.
 	BoundingSize *model.Vector3     `json:"boundingSize,omitempty"`
 	Textures     []string           `json:"textures"`
@@ -156,7 +157,7 @@ func summarizeLOD(index int, lod model.LOD) LODSummary {
 	_, partial := lod.Properties[partialParseProperty]
 
 	var boundingSizeValue *model.Vector3
-	if IsGraphicalResolution(lod.Resolution) {
+	if lodname.IsGraphical(lod.Resolution) {
 		size := boundingSize(lod.Vertices)
 		boundingSizeValue = &size
 	}
@@ -164,7 +165,7 @@ func summarizeLOD(index int, lod model.LOD) LODSummary {
 	return LODSummary{
 		Index:          index,
 		Resolution:     lod.Resolution,
-		ResolutionName: ResolutionName(lod.Resolution),
+		ResolutionName: lodname.Name(lod.Resolution),
 		Partial:        partial,
 		VertexCount:    len(lod.Vertices),
 		FaceCount:      len(lod.Faces),

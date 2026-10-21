@@ -1,18 +1,20 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 )
 
 func TestOutputPaths(t *testing.T) {
 	t.Parallel()
 
+	// outputPaths builds paths with filepath, so the separators are the OS's.
 	gotP3D, gotCfg := outputPaths("/tmp/example.p3d")
-	if gotP3D != "/tmp/example_mlod.p3d" {
-		t.Fatalf("output p3d = %q, want %q", gotP3D, "/tmp/example_mlod.p3d")
+	if want := filepath.FromSlash("/tmp/example_mlod.p3d"); gotP3D != want {
+		t.Fatalf("output p3d = %q, want %q", gotP3D, want)
 	}
-	if gotCfg != "/tmp/example.model.cfg" {
-		t.Fatalf("output cfg = %q, want %q", gotCfg, "/tmp/example.model.cfg")
+	if want := filepath.FromSlash("/tmp/example.model.cfg"); gotCfg != want {
+		t.Fatalf("output cfg = %q, want %q", gotCfg, want)
 	}
 }
 
@@ -20,8 +22,8 @@ func TestFBXOutputPath(t *testing.T) {
 	t.Parallel()
 
 	got := fbxOutputPath("/tmp/example.p3d")
-	if got != "/tmp/example.fbx" {
-		t.Fatalf("fbxOutputPath = %q, want %q", got, "/tmp/example.fbx")
+	if want := filepath.FromSlash("/tmp/example.fbx"); got != want {
+		t.Fatalf("fbxOutputPath = %q, want %q", got, want)
 	}
 }
 

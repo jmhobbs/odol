@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"os"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // Marshal converts a model to binary FBX bytes, selecting the

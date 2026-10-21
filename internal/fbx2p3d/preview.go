@@ -3,9 +3,10 @@ package fbx2p3d
 import (
 	"fmt"
 
-	"github.com/jmhobbs/odol/internal/detector"
 	"github.com/jmhobbs/odol/internal/inspect"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/detector"
+	"github.com/jmhobbs/odol/p3d/lodname"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // MeshBuffers is one LOD's geometry flattened for WebGL.
@@ -73,7 +74,7 @@ func Preview(m *model.Model) ModelPreview {
 	preview := ModelPreview{HighestDetailIndex: -1}
 	for i, lod := range m.LODs {
 		lodSummary := summary.LODs[i]
-		graphical := inspect.IsGraphicalResolution(lod.Resolution)
+		graphical := lodname.IsGraphical(lod.Resolution)
 
 		name := lodSummary.ResolutionName
 		if graphical {

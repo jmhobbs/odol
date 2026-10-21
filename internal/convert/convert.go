@@ -9,12 +9,12 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/jmhobbs/odol/internal/detector"
 	"github.com/jmhobbs/odol/internal/fbxexport"
-	"github.com/jmhobbs/odol/internal/mlod"
-	"github.com/jmhobbs/odol/internal/model"
 	"github.com/jmhobbs/odol/internal/modelcfg"
-	"github.com/jmhobbs/odol/internal/odol"
+	"github.com/jmhobbs/odol/p3d/detector"
+	"github.com/jmhobbs/odol/p3d/mlod"
+	"github.com/jmhobbs/odol/p3d/model"
+	"github.com/jmhobbs/odol/p3d/odol"
 )
 
 // PartialParseError indicates the input ODOL data could not be fully

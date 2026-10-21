@@ -1,6 +1,6 @@
-// Package inspect summarizes a parsed P3D model.Model for reporting: LOD
-// list, point/face counts, textures, materials, and named selections.
-package inspect
+// Package lodname names P3D LODs from their resolution value and tells
+// graphical LODs apart from functional, shadow, geometry and memory ones.
+package lodname
 
 import "math"
 
@@ -12,7 +12,7 @@ type resolutionEntry struct {
 // namedResolutions lists Bohemia's documented resolution values
 // (docs/P3DModelInfo.txt) that map to a specific LOD type. Comparisons use
 // the exact float32 bit pattern, since these constants are only meaningful
-// bit-for-bit (the same technique internal/odol uses for its Geometry LOD
+// bit-for-bit (the same technique p3d/odol uses for its Geometry LOD
 // check).
 var namedResolutions = []resolutionEntry{
 	{0x447a0000, "View Gunner"},
@@ -46,12 +46,12 @@ var namedResolutions = []resolutionEntry{
 	{0x5a9536c7, "Wreck"},
 }
 
-// ResolutionName maps a LOD's raw resolution value to a human-readable name
+// Name maps a LOD's raw resolution value to a human-readable name
 // using Bohemia's documented resolution table. Values below 1000 are
 // graphical LODs (their specific rank isn't encoded in the P3D itself, only
 // in Oxygen/model.cfg), and unrecognized values fall back to a generic
 // functional/shadow label based on the documented range boundaries.
-func ResolutionName(resolution float32) string {
+func Name(resolution float32) string {
 	bits := math.Float32bits(resolution)
 	for _, entry := range namedResolutions {
 		if entry.bits == bits {
@@ -60,7 +60,7 @@ func ResolutionName(resolution float32) string {
 	}
 
 	switch {
-	case IsGraphicalResolution(resolution):
+	case IsGraphical(resolution):
 		return "Graphical LOD"
 	case resolution < 10000:
 		return "Unknown functional LOD"
@@ -69,10 +69,10 @@ func ResolutionName(resolution float32) string {
 	}
 }
 
-// IsGraphicalResolution reports whether resolution identifies a graphical
+// IsGraphical reports whether resolution identifies a graphical
 // LOD - one meant to be rendered, as opposed to Bohemia's functional/
 // shadow/geometry/memory LODs - per the <1000 threshold documented in
 // docs/P3DModelInfo.txt.
-func IsGraphicalResolution(resolution float32) bool {
+func IsGraphical(resolution float32) bool {
 	return resolution < 1000
 }

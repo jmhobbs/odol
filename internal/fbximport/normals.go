@@ -3,7 +3,7 @@ package fbximport
 import (
 	"fmt"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // NormalConvention says how an FBX file's normals relate to its geometry,

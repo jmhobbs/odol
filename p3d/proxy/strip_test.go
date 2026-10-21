@@ -1,14 +1,14 @@
-package fbxexport
+package proxy
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
-func TestStripProxySelectionsNoProxySelectionsIsNoOp(t *testing.T) {
+func TestStripNoProxySelectionsIsNoOp(t *testing.T) {
 	lod := model.LOD{
 		Resolution: 1.0,
 		Vertices:   []model.Vector3{{X: 0}, {X: 1}, {X: 2}},
@@ -20,12 +20,12 @@ func TestStripProxySelectionsNoProxySelectionsIsNoOp(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Equal(t, lod, got)
 }
 
-func TestStripProxySelectionsFaceOnlyRemovesFaceAndItsVertices(t *testing.T) {
+func TestStripFaceOnlyRemovesFaceAndItsVertices(t *testing.T) {
 	// Mirrors the real-world m4a1.p3d shape: a proxy selection with an
 	// empty VertexIndices/VertexWeights but a populated FaceIndices.
 	lod := model.LOD{
@@ -43,14 +43,14 @@ func TestStripProxySelectionsFaceOnlyRemovesFaceAndItsVertices(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Empty(t, got.Selections)
 	assert.Equal(t, []model.Vector3{{X: 0}, {X: 1}, {X: 2}}, got.Vertices)
 	assert.Equal(t, []model.Face{{Indices: []uint32{0, 1, 2}}}, got.Faces)
 }
 
-func TestStripProxySelectionsSharedVertexIsKept(t *testing.T) {
+func TestStripSharedVertexIsKept(t *testing.T) {
 	// The proxy placeholder face shares vertex 2 with a kept face.
 	lod := model.LOD{
 		Vertices: []model.Vector3{{X: 0}, {X: 1}, {X: 2}, {X: 3}},
@@ -63,7 +63,7 @@ func TestStripProxySelectionsSharedVertexIsKept(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Empty(t, got.Selections)
 	assert.Len(t, got.Faces, 1)
@@ -73,7 +73,7 @@ func TestStripProxySelectionsSharedVertexIsKept(t *testing.T) {
 	assert.Equal(t, []model.Vector3{{X: 0}, {X: 1}, {X: 2}}, got.Vertices)
 }
 
-func TestStripProxySelectionsMultipleProxiesAreAllRemoved(t *testing.T) {
+func TestStripMultipleProxiesAreAllRemoved(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{
 			{X: 0}, {X: 1}, {X: 2}, // real triangle
@@ -91,14 +91,14 @@ func TestStripProxySelectionsMultipleProxiesAreAllRemoved(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Empty(t, got.Selections)
 	assert.Equal(t, []model.Vector3{{X: 0}, {X: 1}, {X: 2}}, got.Vertices)
 	assert.Equal(t, []model.Face{{Indices: []uint32{0, 1, 2}}}, got.Faces)
 }
 
-func TestStripProxySelectionsRemapsKeptSelections(t *testing.T) {
+func TestStripRemapsKeptSelections(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{
 			{X: 0}, {X: 1}, {X: 2}, // real triangle (vertices 0,1,2)
@@ -119,7 +119,7 @@ func TestStripProxySelectionsRemapsKeptSelections(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Len(t, got.Selections, 1)
 	assert.Equal(t, "cargo", got.Selections[0].Name)
@@ -129,7 +129,7 @@ func TestStripProxySelectionsRemapsKeptSelections(t *testing.T) {
 	assert.Equal(t, []uint32{0}, got.Selections[0].FaceIndices)
 }
 
-func TestStripProxySelectionsRemapsUVSetsAndPointMasses(t *testing.T) {
+func TestStripRemapsUVSetsAndPointMasses(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{
 			{X: 0}, {X: 1}, {X: 2}, // real triangle
@@ -152,7 +152,7 @@ func TestStripProxySelectionsRemapsUVSetsAndPointMasses(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Equal(t, [][]model.UV{
 		{{U: 0, V: 0}},
@@ -161,7 +161,7 @@ func TestStripProxySelectionsRemapsUVSetsAndPointMasses(t *testing.T) {
 	assert.Equal(t, []float32{1, 2, 3}, got.PointMasses)
 }
 
-func TestStripProxySelectionsRemovesOrphanProxyTriangle(t *testing.T) {
+func TestStripRemovesOrphanProxyTriangle(t *testing.T) {
 	// Mirrors scarh.p3d faces 0-3: an untextured proxy triangle (right
 	// angle, legs 0.1 and 0.2) that no named selection references, left
 	// behind after its proxy was deleted.
@@ -179,7 +179,7 @@ func TestStripProxySelectionsRemovesOrphanProxyTriangle(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Equal(t, []model.Vector3{{X: 0}, {X: 1}, {Y: 1}}, got.Vertices)
 	assert.Equal(t, []model.Face{{Indices: []uint32{0, 1, 2}, Texture: "a_co.paa"}}, got.Faces)
@@ -188,7 +188,7 @@ func TestStripProxySelectionsRemovesOrphanProxyTriangle(t *testing.T) {
 	}, got.Selections)
 }
 
-func TestStripProxySelectionsKeepsProxyShapedFaceInSelection(t *testing.T) {
+func TestStripKeepsProxyShapedFaceInSelection(t *testing.T) {
 	// Real geometry can have the proxy shape too (character_male.p3d has
 	// two such head triangles), but it belongs to named selections.
 	lod := model.LOD{
@@ -201,12 +201,12 @@ func TestStripProxySelectionsKeepsProxyShapedFaceInSelection(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Equal(t, lod, got)
 }
 
-func TestStripProxySelectionsKeepsTexturedProxyShapedFace(t *testing.T) {
+func TestStripKeepsTexturedProxyShapedFace(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{
 			{X: 0.3, Y: 0.1, Z: 0.1}, {X: 0.3, Y: 0.1, Z: 0}, {X: 0.5, Y: 0.1, Z: 0},
@@ -217,12 +217,12 @@ func TestStripProxySelectionsKeepsTexturedProxyShapedFace(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Equal(t, lod, got)
 }
 
-func TestStripProxySelectionsKeepsNonProxyShapedUntexturedFace(t *testing.T) {
+func TestStripKeepsNonProxyShapedUntexturedFace(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{
 			{X: 0}, {X: 1}, {Y: 1}, // right angle, legs 1:1
@@ -234,7 +234,7 @@ func TestStripProxySelectionsKeepsNonProxyShapedUntexturedFace(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Equal(t, lod, got)
 }
@@ -242,7 +242,7 @@ func TestStripProxySelectionsKeepsNonProxyShapedUntexturedFace(t *testing.T) {
 // scarh.p3d LOD 0 has 11 untextured proxy triangles: 7 referenced by
 // "proxy:" selections and 4 orphans that no selection references.
 
-func TestStripProxySelectionsAllGeometryIsProxyProducesEmptyLOD(t *testing.T) {
+func TestStripAllGeometryIsProxyProducesEmptyLOD(t *testing.T) {
 	lod := model.LOD{
 		Vertices: []model.Vector3{{X: 0}, {X: 1}, {X: 2}},
 		Faces: []model.Face{
@@ -253,7 +253,7 @@ func TestStripProxySelectionsAllGeometryIsProxyProducesEmptyLOD(t *testing.T) {
 		},
 	}
 
-	got := stripProxySelections(lod)
+	got := Strip(lod)
 
 	assert.Empty(t, got.Vertices)
 	assert.Empty(t, got.Faces)

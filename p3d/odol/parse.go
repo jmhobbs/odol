@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 var errShortData = errors.New("unexpected end of odol data")
@@ -88,13 +88,15 @@ type rawLod struct {
 
 type rawProxy struct {
 	modelPath           string
+	transform           [4]model.Vector3
 	sequenceID          int32
 	namedSelectionIndex int32
 	sectionIndex        int32
 }
 
 type rawMaterial struct {
-	name string
+	name    string
+	decoded *model.Material // nil when only the name could be read
 }
 
 type rawStageTexture struct {
@@ -636,6 +638,15 @@ func buildModel(name string, version uint32, info rawModelInfo, animations *rawA
 			PointMasses:   geometryMasses(info.pointMasses, info.totalMass, raw.resolution, len(raw.vertices)),
 			IconColor:     raw.iconColor,
 			SelectedColor: raw.selectedColor,
+			Materials:     buildMaterials(raw.materials),
+		}
+		if len(raw.st) == len(raw.vertices) {
+			lod.Tangents = make([]model.Vector3, len(raw.st))
+			lod.Bitangents = make([]model.Vector3, len(raw.st))
+			for i, pair := range raw.st {
+				lod.Tangents[i] = pair.s
+				lod.Bitangents[i] = pair.t
+			}
 		}
 
 		for _, v := range raw.vertices {
@@ -741,8 +752,15 @@ func buildModel(name string, version uint32, info rawModelInfo, animations *rawA
 			if proxy.namedSelectionIndex >= 0 && int(proxy.namedSelectionIndex) < len(selectionNames) {
 				namedSelectionName = selectionNames[proxy.namedSelectionIndex]
 			}
+			transform := proxy.transform
+			transform[3] = model.Vector3{
+				X: transform[3].X + info.centerOfMass.X,
+				Y: transform[3].Y + info.centerOfMass.Y,
+				Z: transform[3].Z + info.centerOfMass.Z,
+			}
 			lod.Proxies = append(lod.Proxies, model.Proxy{
 				ModelPath:           proxy.modelPath,
+				Transform:           transform,
 				SequenceID:          proxy.sequenceID,
 				NamedSelectionIndex: proxy.namedSelectionIndex,
 				NamedSelectionName:  namedSelectionName,
@@ -754,6 +772,23 @@ func buildModel(name string, version uint32, info rawModelInfo, animations *rawA
 	}
 
 	return result
+}
+
+// buildMaterials returns the LOD's embedded materials in table order. One
+// that couldn't be decoded keeps its name and is marked Partial.
+func buildMaterials(raw []rawMaterial) []model.Material {
+	if len(raw) == 0 {
+		return nil
+	}
+	materials := make([]model.Material, 0, len(raw))
+	for _, m := range raw {
+		if m.decoded != nil {
+			materials = append(materials, *m.decoded)
+			continue
+		}
+		materials = append(materials, model.Material{Name: m.name, Partial: true})
+	}
+	return materials
 }
 
 func geometryVertexCount(lods []rawLod) int {
@@ -1326,8 +1361,9 @@ func (p *parser) readProxy() (rawProxy, error) {
 	if err != nil {
 		return rawProxy{}, err
 	}
-	for i := 0; i < 4; i++ {
-		if _, err := p.readVec3(); err != nil {
+	var transform [4]model.Vector3
+	for i := range transform {
+		if transform[i], err = p.readVec3(); err != nil {
 			return rawProxy{}, err
 		}
 	}
@@ -1351,6 +1387,7 @@ func (p *parser) readProxy() (rawProxy, error) {
 	}
 	return rawProxy{
 		modelPath:           modelPath,
+		transform:           transform,
 		sequenceID:          sequenceID,
 		namedSelectionIndex: namedSelectionIndex,
 		sectionIndex:        sectionIndex,
@@ -1367,6 +1404,12 @@ func (p *parser) readMaterial(isLast bool) (rawMaterial, error) {
 		return rawMaterial{}, err
 	}
 	bodyStart := p.off
+	if materialType == dayzMaterialType {
+		if mat, end, ok := p.decodeDayZMaterial(name, bodyStart, isLast); ok {
+			p.off = end
+			return rawMaterial{name: name, decoded: &mat}, nil
+		}
+	}
 	if end, ok := p.findMaterialStageDataEnd(bodyStart, isLast); ok {
 		p.off = end
 		return rawMaterial{name: name}, nil
@@ -1489,6 +1532,191 @@ func (p *parser) readMaterial(isLast bool) (rawMaterial, error) {
 	}
 
 	return rawMaterial{name: name}, nil
+}
+
+// dayzMaterialType is the embedded material format DayZ's binarizer writes.
+// It extends the LodMaterial layout in docs/ODOLV4x.txt with two colours, an
+// 18-dword block and a dword before RenderFlags, whose meaning is unknown;
+// the layout was worked out by comparing embedded copies against the text
+// .rvmat files they came from.
+const dayzMaterialType = 20
+
+// Sanity bounds for decodeDayZMaterial. Vanilla materials have 13-15 stages
+// and at most 8 transforms.
+const (
+	maxMaterialStages     = 64
+	maxMaterialUVSource   = 16
+	maxMaterialStageExtra = 1
+	maxMaterialFilter     = 3
+)
+
+// decodeDayZMaterial reads a type 20 material body field by field. It only
+// accepts the result when the decoded end is followed by what must come next:
+// another material header, or for the last material the LOD's edge arrays and
+// first face. On failure the caller falls back to the heuristic end-finders.
+func (p *parser) decodeDayZMaterial(name string, bodyStart int, isLast bool) (model.Material, int, bool) {
+	r := &stickyReader{p: &parser{data: p.data, off: bodyStart, version: p.version}}
+	mat := model.Material{Name: name, Type: dayzMaterialType}
+
+	r.color(&mat.Emissive)
+	r.color(&mat.Ambient)
+	r.color(&mat.Diffuse)
+	r.color(&mat.ForcedDiffuse)
+	r.color(&mat.Specular)
+	r.skip(2 * 16) // unknown colours: (0,0,0,1) and (0,0,0.3,0.99) in vanilla
+	r.color(&mat.Specular2)
+	mat.SpecularPower = r.f32()
+	r.skip(18 * 4) // unknown, identical in every vanilla material
+	mat.PixelShader = r.u32()
+	mat.VertexShader = r.u32()
+	mat.MainLight = r.u32()
+	mat.FogMode = r.u32()
+	mat.Surface = r.str()
+	r.u32() // unknown, 1 in vanilla
+	mat.RenderFlags = r.u32()
+	stageCount := r.u32()
+	texGenCount := r.u32()
+	if r.err != nil || stageCount > maxMaterialStages || texGenCount > maxMaterialStages {
+		return model.Material{}, 0, false
+	}
+
+	for range stageCount {
+		stage, ok := r.stage()
+		if !ok {
+			return model.Material{}, 0, false
+		}
+		mat.Stages = append(mat.Stages, stage)
+	}
+	for range texGenCount {
+		texGen := model.TexGen{UVSource: r.u32()}
+		for i := range texGen.Transform {
+			texGen.Transform[i] = model.Vector3{X: r.f32(), Y: r.f32(), Z: r.f32()}
+		}
+		if texGen.UVSource > maxMaterialUVSource {
+			return model.Material{}, 0, false
+		}
+		mat.TexGens = append(mat.TexGens, texGen)
+	}
+	stageTI, ok := r.stage()
+	if !ok || r.err != nil {
+		return model.Material{}, 0, false
+	}
+	mat.StageTI = &stageTI
+
+	for _, c := range [][4]float32{mat.Emissive, mat.Ambient, mat.Diffuse, mat.ForcedDiffuse, mat.Specular, mat.Specular2} {
+		for _, v := range c {
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				return model.Material{}, 0, false
+			}
+		}
+	}
+
+	end := r.p.off
+	if !p.materialEndIsExact(end, isLast) {
+		return model.Material{}, 0, false
+	}
+	return mat, end, true
+}
+
+// materialEndIsExact reports whether end is exactly where the material table
+// entry stops: at the next material's header, or for the last material at
+// the LOD's edge arrays followed by a face header. Unlike validateMaterialEnd
+// it allows no slack, and for the last material it accepts the edge and face
+// shape without validating the whole LOD tail, which rejects many vanilla
+// LODs that otherwise parse.
+func (p *parser) materialEndIsExact(end int, isLast bool) bool {
+	if !isLast {
+		return p.looksLikeNextMaterialHeaderAt(end)
+	}
+	if off, ok := p.alignMaterialEndToEdges(end); ok && off == end {
+		return true
+	}
+	next, ok := skipEdgeArray(p.data, end)
+	if !ok {
+		return false
+	}
+	if looksLikePossibleFaceHeader(p.data, next) {
+		return true
+	}
+	next, ok = skipEdgeArray(p.data, next)
+	return ok && looksLikePossibleFaceHeader(p.data, next)
+}
+
+// stickyReader wraps parser reads for field-by-field decoding: after the
+// first error every read returns zero, so a decoder checks err once at the
+// end instead of after every field.
+type stickyReader struct {
+	p   *parser
+	err error
+}
+
+func (r *stickyReader) u32() uint32 {
+	if r.err != nil {
+		return 0
+	}
+	v, err := r.p.readU32()
+	r.err = err
+	return v
+}
+
+func (r *stickyReader) u8() uint8 {
+	if r.err != nil {
+		return 0
+	}
+	v, err := r.p.readU8()
+	r.err = err
+	return v
+}
+
+func (r *stickyReader) f32() float32 {
+	if r.err != nil {
+		return 0
+	}
+	v, err := r.p.readF32()
+	r.err = err
+	return v
+}
+
+func (r *stickyReader) str() string {
+	if r.err != nil {
+		return ""
+	}
+	v, err := r.p.readString()
+	r.err = err
+	return v
+}
+
+func (r *stickyReader) skip(n int) {
+	if r.err != nil {
+		return
+	}
+	_, r.err = r.p.readBytes(n)
+}
+
+func (r *stickyReader) color(dst *[4]float32) {
+	for i := range dst {
+		dst[i] = r.f32()
+	}
+}
+
+// stage reads one stage texture entry and checks it looks like one: a known
+// filter, a texture path without control characters and a 0/1 trailing byte.
+// Tabs are allowed: vanilla rock materials carry one inside a procedural
+// texture string.
+func (r *stickyReader) stage() (model.MaterialStage, bool) {
+	stage := model.MaterialStage{Filter: r.u32()}
+	stage.Texture = r.str()
+	stage.TexGen = r.u32()
+	stage.Extra = r.u8()
+	if r.err != nil || stage.Filter > maxMaterialFilter || stage.Extra > maxMaterialStageExtra {
+		return model.MaterialStage{}, false
+	}
+	for i := 0; i < len(stage.Texture); i++ {
+		if c := stage.Texture[i]; c < 32 && c != '\t' {
+			return model.MaterialStage{}, false
+		}
+	}
+	return stage, true
 }
 
 func (p *parser) findMaterialStageDataEnd(bodyStart int, isLast bool) (int, bool) {

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jmhobbs/odol/internal/model"
 	"github.com/jmhobbs/odol/internal/modelcfg"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 func TestRenderConfig(t *testing.T) {

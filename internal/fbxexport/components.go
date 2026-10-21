@@ -1,6 +1,6 @@
 package fbxexport
 
-import "github.com/jmhobbs/odol/internal/model"
+import "github.com/jmhobbs/odol/p3d/model"
 
 // componentGroup holds the indices (into the original faces slice) of the
 // faces belonging to one connected component.

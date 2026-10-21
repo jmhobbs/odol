@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // ParseFile reads an MLOD P3D file from disk and parses it.
@@ -149,6 +149,30 @@ func reconstructUVSet(data []byte, faces []model.Face, vertexCount int) []model.
 	return uvSet
 }
 
+// assignFaceUVSet stores a #UVSet# TAGG's face-vertex-ordered UV pairs on each
+// face as Face.UVSets[id], keeping seams that reconstructUVSet's per-vertex
+// copy loses. Faces past the end of short data get no entry for the set.
+func assignFaceUVSet(data []byte, faces []model.Face, id int) {
+	pos := 0
+	for i := range faces {
+		if pos+8*len(faces[i].Indices) > len(data) {
+			return
+		}
+		uvs := make([]model.UV, len(faces[i].Indices))
+		for k := range uvs {
+			uvs[k] = model.UV{
+				U: math.Float32frombits(binary.LittleEndian.Uint32(data[pos:])),
+				V: math.Float32frombits(binary.LittleEndian.Uint32(data[pos+4:])),
+			}
+			pos += 8
+		}
+		for len(faces[i].UVSets) <= id {
+			faces[i].UVSets = append(faces[i].UVSets, nil)
+		}
+		faces[i].UVSets[id] = uvs
+	}
+}
+
 func parseFace(r *mlodReader) (model.Face, error) {
 	vertexCount := r.readU32()
 	if r.err != nil {
@@ -240,6 +264,7 @@ func parseTaggs(r *mlodReader, faces []model.Face, vertexCount, faceCount int) (
 			if id == 0 {
 				break // redundant with Face.UVs; primary UV comes from face records
 			}
+			assignFaceUVSet(data[4:], faces, int(id))
 			uvSet := reconstructUVSet(data[4:], faces, vertexCount)
 			for len(result.uvSets) <= int(id) {
 				result.uvSets = append(result.uvSets, nil)

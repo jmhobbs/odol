@@ -3,7 +3,7 @@ package fbxexport
 import (
 	"errors"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 var errNoLODs = errors.New("model has no LODs")

@@ -9,7 +9,7 @@ import (
 
 	"github.com/jmhobbs/odol/internal/fbxbinary"
 	"github.com/jmhobbs/odol/internal/fbxexport"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 func approxVec3(t *testing.T, want, got model.Vector3, tolerance float32, msg string) {

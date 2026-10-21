@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
+	"github.com/jmhobbs/odol/p3d/proxy"
 )
 
 // metersToCentimeters converts ODOL/MLOD vertex positions (meters) to the
@@ -36,7 +37,7 @@ func buildScene(m *model.Model) (*meshScene, error) {
 	if err != nil {
 		return nil, err
 	}
-	stripped := stripProxySelections(*lod)
+	stripped := proxy.Strip(*lod)
 	lod = &stripped
 
 	ids := &idCounter{}

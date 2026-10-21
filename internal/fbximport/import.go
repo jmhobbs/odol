@@ -12,7 +12,7 @@ import (
 	"math"
 
 	"github.com/jmhobbs/odol/internal/fbxbinary"
-	"github.com/jmhobbs/odol/internal/model"
+	"github.com/jmhobbs/odol/p3d/model"
 )
 
 // centimetersToMeters inverts internal/fbxexport/build.go's

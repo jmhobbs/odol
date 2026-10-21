@@ -9,11 +9,11 @@ import (
 	"io"
 	"os"
 
-	"github.com/jmhobbs/odol/internal/detector"
 	"github.com/jmhobbs/odol/internal/inspect"
-	"github.com/jmhobbs/odol/internal/mlod"
-	"github.com/jmhobbs/odol/internal/model"
-	"github.com/jmhobbs/odol/internal/odol"
+	"github.com/jmhobbs/odol/p3d/detector"
+	"github.com/jmhobbs/odol/p3d/mlod"
+	"github.com/jmhobbs/odol/p3d/model"
+	"github.com/jmhobbs/odol/p3d/odol"
 )
 
 func main() {
