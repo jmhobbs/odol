@@ -1,16 +1,22 @@
-# ODOL
+# P3D Tools
 
-This repo contains tooling to convert Bohemia Interactive P3D files from ODOLv6 and ODOLv7 to MLOD format, or any P3D to FBX. It can also build an MLOD P3D from FBX files.
+This repo contains tooling to work with Bohemia Interactive P3D files.
+
+Originally, it was created to convert from ODOLv6 and ODOLv7 to MLOD format, or any P3D to FBX.
+
+It now includes inspection tools and can build an MLOD P3D from FBX files.
 
 ## Usage
 
 ### Web
 
-The tool is available in your browser at [tools.dzhosts.com](https://tools.dzhosts.com/p3d-converter/). This is the easiest way to use it, and it should work on any platform.
+The conversion and FBX-to-P3D tools are available in your browser at [tools.dzhosts.com](https://tools.dzhosts.com/p3d-converter/). This is the easiest way to use it, and it should work on any platform.
 
-![The web browser version of the tool](.github/readme/web.png)
+![The web browser version of the p3d converter](.github/readme/web.png)
 
 Building a P3D from FBX files is available at [tools.dzhosts.com/fbx-to-p3d](https://tools.dzhosts.com/fbx-to-p3d/).
+
+![The web browser version of the FBX builder](.github/readme/fbx2p3d.png)
 
 ### CLI
 
