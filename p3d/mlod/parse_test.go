@@ -1,6 +1,7 @@
 package mlod
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,20 @@ func marshalAndParse(t *testing.T, m *model.Model) *model.Model {
 func TestParseErrorOnNonMLOD(t *testing.T) {
 	_, err := Parse([]byte("garbage data that is not mlod"), "test")
 	assert.Error(t, err)
+}
+
+func TestParseRejectsCountsLargerThanTheFile(t *testing.T) {
+	// "MLOD" then text: the LOD count reads as about two billion.
+	_, err := Parse([]byte("MLOD but not really"), "test")
+	assert.ErrorContains(t, err, "LOD count")
+
+	// A real header whose vertex count has been corrupted.
+	data, err := Marshal(minimalModel())
+	require.NoError(t, err)
+	// MLOD, version, LOD count, P3DM, two version fields, then the vertex count.
+	binary.LittleEndian.PutUint32(data[24:], 0x7fffffff)
+	_, err = Parse(data, "test")
+	assert.ErrorContains(t, err, "vertex count 2147483647")
 }
 
 func TestParseVertexCount(t *testing.T) {

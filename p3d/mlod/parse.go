@@ -33,6 +33,7 @@ func Parse(data []byte, name string) (*model.Model, error) {
 
 	version := r.readU32()
 	lodCount := r.readU32()
+	r.checkCount("LOD", lodCount, minLODSize)
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -65,6 +66,9 @@ func parseLOD(r *mlodReader) (model.LOD, error) {
 	normalCount := r.readU32()
 	faceCount := r.readU32()
 	_ = r.readU32() // flags
+	r.checkCount("vertex", vertexCount, vertexSize)
+	r.checkCount("normal", normalCount, normalSize)
+	r.checkCount("face", faceCount, minFaceSize)
 	if r.err != nil {
 		return model.LOD{}, r.err
 	}
@@ -319,11 +323,35 @@ func nullTermString(b []byte) string {
 	return string(b)
 }
 
+// The smallest each record can be on disk, used to reject counts that
+// couldn't fit in the file.
+const (
+	// P3DM magic, six u32 header fields, TAGG magic and the resolution.
+	minLODSize = 4 + 6*4 + 4 + 4
+	vertexSize = 4 * 4
+	normalSize = 3 * 4
+	// Vertex count, four corner slots, flags and two empty strings.
+	minFaceSize = 4 + 4*16 + 4 + 2
+)
+
 // mlodReader is a sequential binary reader that accumulates the first error.
 type mlodReader struct {
 	data []byte
 	pos  int
 	err  error
+}
+
+// checkCount fails the read when count records of at least size bytes each
+// can't fit in the rest of the data, so a corrupt count can't make the
+// parser allocate more than the file could describe.
+func (r *mlodReader) checkCount(what string, count uint32, size int) {
+	if r.err != nil {
+		return
+	}
+	if left := len(r.data) - r.pos; uint64(count)*uint64(size) > uint64(left) {
+		r.err = fmt.Errorf("%s count %d at offset %d needs at least %d bytes, have %d",
+			what, count, r.pos, uint64(count)*uint64(size), left)
+	}
 }
 
 func (r *mlodReader) readU8() uint8 {

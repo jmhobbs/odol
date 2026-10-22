@@ -183,6 +183,9 @@ func parse(data []byte, name string, allowPartialLOD bool) (*model.Model, error)
 	if err != nil {
 		return nil, err
 	}
+	if lodCount > uint32((len(data)-p.off)/4) {
+		return nil, fmt.Errorf("implausible LOD count %d", lodCount)
+	}
 
 	resolutions := make([]float32, 0, lodCount)
 	for i := uint32(0); i < lodCount; i++ {
@@ -2234,6 +2237,9 @@ func (p *parser) readUVSet() ([]model.UV, error) {
 }
 
 func (p *parser) readPackedUVWords(count int, defaultFill bool) ([]uint32, error) {
+	if err := p.checkFillCount(count, "UV"); err != nil {
+		return nil, err
+	}
 	if defaultFill {
 		value, err := p.readU32()
 		if err != nil {
@@ -2262,6 +2268,9 @@ func (p *parser) readPackedUVWords(count int, defaultFill bool) ([]uint32, error
 }
 
 func (p *parser) readLegacyUVPairs(count int, defaultFill bool) ([]model.UV, error) {
+	if err := p.checkFillCount(count, "UV"); err != nil {
+		return nil, err
+	}
 	if defaultFill {
 		u, err := p.readF32()
 		if err != nil {
@@ -2430,8 +2439,8 @@ func (p *parser) readCondensedU32() ([]uint32, error) {
 	if err != nil {
 		return nil, err
 	}
-	if count > uint32(len(p.data)) {
-		return nil, fmt.Errorf("implausible u32 count %d", count)
+	if err := p.checkFillCount(int(count), "u32"); err != nil {
+		return nil, err
 	}
 	defaultFill, err := p.readU8()
 	if err != nil {
@@ -2454,6 +2463,9 @@ func (p *parser) readCondensedU32() ([]uint32, error) {
 func (p *parser) readCondensedI32() ([]int32, error) {
 	count, err := p.readU32()
 	if err != nil {
+		return nil, err
+	}
+	if err := p.checkFillCount(int(count), "i32"); err != nil {
 		return nil, err
 	}
 	defaultFill, err := p.readU8()
@@ -2490,6 +2502,9 @@ func (p *parser) readCondensedI32() ([]int32, error) {
 func (p *parser) readCondensedVec3() ([]model.Vector3, error) {
 	count, err := p.readU32()
 	if err != nil {
+		return nil, err
+	}
+	if err := p.checkFillCount(int(count), "vec3"); err != nil {
 		return nil, err
 	}
 	defaultFill, err := p.readU8()
@@ -2931,6 +2946,19 @@ func (p *parser) readVertexIndices(count int) ([]uint32, error) {
 		result = append(result, uint32(value))
 	}
 	return result, nil
+}
+
+// checkFillCount rejects an array count larger than the data being parsed.
+// Condensed arrays can store a single "default fill" value for any number of
+// entries, so the count alone decides the allocation; every per-vertex array
+// sits beside vertex positions that take more than a byte each, so a real
+// count never exceeds the LOD's size, while a corrupt one would otherwise
+// allocate gigabytes and kill the process.
+func (p *parser) checkFillCount(count int, what string) error {
+	if count < 0 || count > len(p.data) {
+		return fmt.Errorf("implausible %s count %d", what, count)
+	}
+	return nil
 }
 
 // maxDecompressedSize bounds the output size accepted by readCompressedBytes.
